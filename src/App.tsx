@@ -46,7 +46,7 @@ import {
   EyeOff
 } from 'lucide-react';
 import { TileData, TeamChoice, TeamStyle, ChatMessage, UserReferralData } from './types';
-import CharacterAnimationLoop from './components/CharacterAnimationLoop';
+
 import {
   dbFetchUsers,
   dbUpsertUser,
@@ -1230,8 +1230,12 @@ export default function App() {
 
   // Map elements
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  const marqueeIndicatorRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const polygonLayersRef = useRef<Record<string, any>>({});
+  const dragArrowMarkersRef = useRef<Record<string, any>>({});
+  const handleTileDragSelectRef = useRef<any>(null);
+  const findClosestCellRef = useRef<any>(null);
   const selectedOutlineRef = useRef<any>(null);
   const boundaryLayerRef = useRef<any>(null);
   const overlayLayersRef = useRef<any[]>([]);
@@ -1288,134 +1292,7 @@ export default function App() {
     };
   }, []);
 
-  // Implement Drag-Box Selection on the leafet map template
-  useEffect(() => {
-    const mapInstance = mapRef.current;
-    if (!mapInstance) return;
-
-    let isDrawing = false;
-    let startLatLng: any = null;
-    let visualBox: any = null;
-
-    const handleMapMouseDown = (e: any) => {
-      // Only draw when multi-select mode is active and box tool is selected
-      if (!latestIsMultiSelectModeRef.current || multiSelectToolRef.current !== 'box') return;
-
-      // Prevent leaflet panning/zooming side effects
-      if (e.originalEvent) {
-        e.originalEvent.preventDefault();
-        e.originalEvent.stopPropagation();
-      }
-
-      isDrawing = true;
-      startLatLng = e.latlng;
-
-      if (visualBox) {
-        mapInstance.removeLayer(visualBox);
-        visualBox = null;
-      }
-    };
-
-    const handleMapMouseMove = (e: any) => {
-      if (!isDrawing || !startLatLng) return;
-
-      const currentLatLng = e.latlng;
-      const bounds = (window as any).L.latLngBounds(startLatLng, currentLatLng);
-
-      if (!visualBox) {
-        visualBox = (window as any).L.rectangle(bounds, {
-          color: '#f59e0b', // Amber selection border
-          weight: 2,
-          fillColor: '#f59e0b',
-          fillOpacity: 0.18,
-          dashArray: '5, 5',
-          className: 'drag-selection-box'
-        }).addTo(mapInstance);
-      } else {
-        visualBox.setBounds(bounds);
-      }
-    };
-
-    const handleMapMouseUp = (e: any) => {
-      if (!isDrawing) return;
-      isDrawing = false;
-
-      const currentLatLng = e.latlng;
-      if (startLatLng && currentLatLng) {
-        const bounds = (window as any).L.latLngBounds(startLatLng, currentLatLng);
-        const minLatCoord = bounds.getSouthWest().lat;
-        const maxLatCoord = bounds.getNorthEast().lat;
-        const minLngCoord = bounds.getSouthWest().lng;
-        const maxLngCoord = bounds.getNorthEast().lng;
-
-        // Perform ultra-fast O(N) lookup inside coordinate bounds
-        const newlySelectedIds: string[] = [];
-        const cells = allCellsRef.current;
-        for (let i = 0; i < cells.length; i++) {
-          const cell = cells[i];
-          if (cell.lat >= minLatCoord && cell.lat <= maxLatCoord &&
-              cell.lng >= minLngCoord && cell.lng <= maxLngCoord) {
-            newlySelectedIds.push(cell.id);
-          }
-        }
-
-        if (newlySelectedIds.length > 0) {
-          setMultiSelectedTileIds(prev => {
-            const next = [...prev];
-            newlySelectedIds.forEach(id => {
-              if (!next.includes(id)) {
-                next.push(id);
-              }
-            });
-            return next;
-          });
-
-          // Apply instant visual style updates to polygons
-          newlySelectedIds.forEach(id => {
-            const polygon = polygonLayersRef.current[id];
-            if (polygon) {
-              const targetTeamName = latestMultiSelectTargetTeamRef.current;
-              const targetStyle = TEAM_STYLES[targetTeamName] || TEAM_STYLES['None'];
-              polygon.setStyle({
-                stroke: true,
-                color: targetTeamName === 'None' ? '#ffffff' : (targetStyle.color || '#ffffff'),
-                dashArray: '5, 5',
-                weight: 2.5,
-                fillColor: targetTeamName === 'None' ? 'transparent' : (targetStyle.color || 'transparent'),
-                fillOpacity: targetTeamName === 'None' ? 0 : 0.35
-              });
-            }
-          });
-
-          setToast({
-            message: `Selected ${newlySelectedIds.length} sectors! 🧩`,
-            description: "Drag-box calculation finished successfully.",
-            type: "success"
-          });
-        }
-      }
-
-      // Cleanup visual box layer
-      if (visualBox) {
-        mapInstance.removeLayer(visualBox);
-        visualBox = null;
-      }
-      startLatLng = null;
-    };
-
-    mapInstance.on('mousedown', handleMapMouseDown);
-    mapInstance.on('mousemove', handleMapMouseMove);
-    mapInstance.on('mouseup', handleMapMouseUp);
-
-    return () => {
-      mapInstance.off('mousedown', handleMapMouseDown);
-      mapInstance.off('mousemove', handleMapMouseMove);
-      mapInstance.off('mouseup', handleMapMouseUp);
-      if (visualBox) {
-        mapInstance.removeLayer(visualBox);
-      }
-    };
-  }, [isMultiSelectMode, multiSelectTool]);
+  // Map-level drag box is now processed compactly inside the custom container gesture handler below to fully support pinch-to-zoom multi-touch features.
 
   // Save changes to localStorage and generate global tickers
   const updateTileInState = (id: string, updatedData: TileData) => {
@@ -2058,6 +1935,9 @@ export default function App() {
       let wasSelectedOnStart = false;
 
       const handleStart = (e: any) => {
+        if (latestIsMultiSelectModeRef.current && multiSelectToolRef.current === 'box') {
+          return; // Let the custom map box-drag handlers do all the work
+        }
         const orig = e.originalEvent;
         if (orig) {
           const touch = orig.touches ? orig.touches[0] : null;
@@ -2096,7 +1976,34 @@ export default function App() {
       };
 
       const handleMove = (e: any) => {
-        if (!latestIsMultiSelectModeRef.current && holdTimerRef.current) {
+        if (latestIsMultiSelectModeRef.current && multiSelectToolRef.current === 'box') {
+          return;
+        }
+        if (latestIsMultiSelectModeRef.current) {
+          if (isDraggingSelectionRef.current) {
+            const mapInstance = mapRef.current;
+            if (mapInstance) {
+              try {
+                let latlng = e.latlng;
+                const orig = e.originalEvent;
+                if (orig && orig.touches && orig.touches.length > 0) {
+                  latlng = mapInstance.mouseEventToLatLng(orig.touches[0]);
+                }
+                
+                if (latlng) {
+                  const closestResult = findClosestCell(latlng.lat, latlng.lng);
+                  if (closestResult && closestResult.cell) {
+                    if (closestResult.distance < 0.0001) {
+                      handleTileDragSelect(closestResult.cell.id);
+                    }
+                  }
+                }
+              } catch (err) {
+                // Safe ignore
+              }
+            }
+          }
+        } else if (holdTimerRef.current) {
           const orig = e.originalEvent;
           if (orig) {
             const touch = orig.touches ? orig.touches[0] : null;
@@ -2142,6 +2049,9 @@ export default function App() {
       });
 
       cellPolygon.on('mouseover', () => {
+        if (latestIsMultiSelectModeRef.current && multiSelectToolRef.current === 'box') {
+          return;
+        }
         if (latestIsMultiSelectModeRef.current && isDraggingSelectionRef.current) {
           handleTileDragSelect(id);
         }
@@ -2163,6 +2073,9 @@ export default function App() {
         }
 
         if (latestIsMultiSelectModeRef.current) {
+          if (multiSelectToolRef.current === 'box') {
+            return;
+          }
           if (e.originalEvent) {
             e.originalEvent.preventDefault();
           }
@@ -2376,6 +2289,478 @@ export default function App() {
       });
     });
   }, [tiles, isMultiSelectMode, multiSelectedTileIds, multiSelectTargetTeam, tempTeam]);
+
+  // Synchronically render and update directional drag arrows on the selected tiles
+  useEffect(() => {
+    const mapInstance = mapRef.current;
+    if (!mapInstance) return;
+
+    // Remove all old markers
+    Object.keys(dragArrowMarkersRef.current).forEach(id => {
+      const marker = dragArrowMarkersRef.current[id];
+      if (marker) {
+        mapInstance.removeLayer(marker);
+      }
+    });
+    dragArrowMarkersRef.current = {};
+
+    if (!isMultiSelectMode || multiSelectedTileIds.length === 0) {
+      return;
+    }
+
+    multiSelectedTileIds.forEach(id => {
+      const cell = allCellsRef.current.find(c => c.id === id);
+      if (!cell) return;
+
+      const arrowIcon = (window as any).L.divIcon({
+        html: `
+          <div class="relative flex items-center justify-center pointer-events-none select-none">
+            <span class="animate-ping absolute inline-flex h-8 w-8 rounded-full bg-amber-500/30 opacity-75"></span>
+            <div class="relative z-10 flex items-center justify-center w-7 h-7 rounded-full bg-slate-950 border-2 border-amber-500 shadow-[0_4px_12px_rgba(245,158,11,0.4)] transition-all transform hover:scale-110">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4 text-amber-400">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v18M3 12h18M12 3l3 3M12 3L9 6M12 21l3-3M12 21l-3-3M3 12l3 3M3 12l3-3M21 12l-3 3M21 12l-3-3" />
+              </svg>
+            </div>
+          </div>
+        `,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+        className: 'leaflet-drag-arrow-marker pointer-events-none select-none'
+      });
+
+      const marker = (window as any).L.marker([cell.lat, cell.lng], {
+        icon: arrowIcon,
+        interactive: false,
+        pane: 'markerPane'
+      }).addTo(mapInstance);
+
+      dragArrowMarkersRef.current[id] = marker;
+    });
+
+    return () => {
+      Object.keys(dragArrowMarkersRef.current).forEach(id => {
+        const marker = dragArrowMarkersRef.current[id];
+        if (marker && mapInstance) {
+          mapInstance.removeLayer(marker);
+        }
+      });
+      dragArrowMarkersRef.current = {};
+    };
+  }, [isMultiSelectMode, multiSelectedTileIds, tiles]);
+
+  // Dedicated touch and mouse drag-selection handler for multi-select mode
+  useEffect(() => {
+    // Only register these drag listeners when multi-select mode is ON
+    if (!isMultiSelectMode) return;
+
+    const container = mapContainerRef.current;
+    const mapInstance = mapRef.current;
+    if (!container || !mapInstance) return;
+
+    const wasDraggingEnabled = mapInstance.dragging ? mapInstance.dragging.enabled() : false;
+    if (multiSelectTool === 'box' && mapInstance.dragging) {
+      mapInstance.dragging.disable();
+    }
+
+    let isDrawingBox = false;
+    let startLatLng: any = null;
+    let visualBox: any = null;
+    let lastEnclosedTileIds: string[] = [];
+    let startAnchorMarker: any = null;
+
+    // Local styling function to restore original style dynamically based on actual state
+    const restoreTileStyle = (id: string) => {
+      const polygon = polygonLayersRef.current[id];
+      if (!polygon) return;
+
+      const currentTiles = latestTilesRef.current || tiles;
+      const cellData = currentTiles[id];
+      const ownerId = cellData?.isMergedChild && cellData.mergedParentId 
+        ? cellData.mergedParentId 
+        : id;
+
+      const existData = currentTiles[ownerId] || {
+        id: ownerId,
+        team: 'None',
+        photo: '',
+        chats: []
+      };
+
+      const isSec = latestMultiSelectedTileIdsRef.current.includes(id);
+      const style = TEAM_STYLES[existData.team || 'None'] || TEAM_STYLES['None'];
+      const targetTeamName = latestMultiSelectTargetTeamRef.current || 'None';
+      const targetStyle = TEAM_STYLES[targetTeamName] || TEAM_STYLES['None'];
+
+      const isMerged = !!(cellData?.isMergedChild || (cellData?.mergedWith && cellData.mergedWith.length > 0));
+      const shouldShowStroke = isSec || !isMerged;
+
+      polygon.setStyle({
+        stroke: shouldShowStroke,
+        color: isSec ? (targetTeamName === 'None' ? '#ffffff' : (targetStyle.color || '#ffffff')) : (existData.team === 'None' || !existData.team ? '#475569' : style.color),
+        dashArray: isSec ? '5, 5' : undefined,
+        weight: isSec ? 2.5 : (existData.team === 'None' || !existData.team ? 0.5 : 1.5),
+        fillColor: isSec ? (targetTeamName === 'None' ? 'transparent' : (targetStyle.color || 'transparent')) : ((existData.team === 'None' || !existData.team || existData.photo) ? 'transparent' : style.color),
+        fillOpacity: isSec ? (targetTeamName === 'None' ? 0 : 0.35) : ((existData.team === 'None' || !existData.team || existData.photo) ? 0 : 0.4),
+      });
+    };
+
+    // Style helper to highlight a tile when enclosed by the marquee select boundary
+    const highlightEnclosedTile = (id: string) => {
+      const polygon = polygonLayersRef.current[id];
+      if (!polygon) return;
+
+      const targetTeamName = latestMultiSelectTargetTeamRef.current || 'None';
+      const targetStyle = TEAM_STYLES[targetTeamName] || TEAM_STYLES['None'];
+
+      polygon.setStyle({
+        stroke: true,
+        color: '#f59e0b', // Amber highlight boundary
+        dashArray: '3, 3',
+        weight: 2.5,
+        fillColor: targetTeamName === 'None' ? '#f59e0b' : targetStyle.color,
+        fillOpacity: 0.30
+      });
+    };
+
+    const handleGestureStart = (clientX: number, clientY: number) => {
+      const rect = container.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+
+      try {
+        const leafletPoint = (window as any).L.point(x, y);
+        const latlng = mapInstance.containerPointToLatLng(leafletPoint);
+        
+        if (multiSelectTool === 'box') {
+          isDrawingBox = true;
+          startLatLng = latlng;
+          lastEnclosedTileIds = [];
+
+          if (startAnchorMarker) {
+            mapInstance.removeLayer(startAnchorMarker);
+          }
+
+          // Anchor marker to highlight corner start
+          startAnchorMarker = (window as any).L.circleMarker(latlng, {
+            radius: 5,
+            color: '#f59e0b',
+            fillColor: '#0b0f19',
+            fillOpacity: 0.9,
+            weight: 2.5,
+            className: 'marquee-anchor'
+          }).addTo(mapInstance);
+
+          // Position and reveal Selection HUD Badge
+          const badge = marqueeIndicatorRef.current;
+          if (badge) {
+            badge.style.display = 'flex';
+            badge.style.left = `${clientX}px`;
+            badge.style.top = `${clientY}px`;
+            const labelNum = document.getElementById('marquee-indicator-count');
+            if (labelNum) labelNum.innerText = '0';
+          }
+        } else {
+          isDraggingSelectionRef.current = true;
+          if (latlng && findClosestCellRef.current) {
+            const closestResult = findClosestCellRef.current(latlng.lat, latlng.lng);
+            if (closestResult && closestResult.cell) {
+              const dLat = closestResult.cell.lat - latlng.lat;
+              const dLng = closestResult.cell.lng - latlng.lng;
+              const squaredDist = dLat * dLat + dLng * dLng;
+              // Generous cell boundary check
+              if (squaredDist < 0.00005) {
+                if (handleTileDragSelectRef.current) {
+                  handleTileDragSelectRef.current(closestResult.cell.id);
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Safe failover
+      }
+    };
+
+    const handleGestureMove = (clientX: number, clientY: number) => {
+      const rect = container.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+
+      try {
+        const leafletPoint = (window as any).L.point(x, y);
+        const latlng = mapInstance.containerPointToLatLng(leafletPoint);
+
+        if (multiSelectTool === 'box') {
+          if (!isDrawingBox || !startLatLng || !latlng) return;
+          const bounds = (window as any).L.latLngBounds(startLatLng, latlng);
+          if (!visualBox) {
+            visualBox = (window as any).L.rectangle(bounds, {
+              color: '#f59e0b', // Amber selection border
+              weight: 2,
+              fillColor: '#f59e0b',
+              fillOpacity: 0.18,
+              dashArray: '5, 5',
+              className: 'drag-selection-box'
+            }).addTo(mapInstance);
+          } else {
+            visualBox.setBounds(bounds);
+          }
+
+          // Live visual feedback: calculate which cells are currently inside the rectangle
+          const minLatCoord = bounds.getSouthWest().lat;
+          const maxLatCoord = bounds.getNorthEast().lat;
+          const minLngCoord = bounds.getSouthWest().lng;
+          const maxLngCoord = bounds.getNorthEast().lng;
+
+          const gridMinLat = gridBoundsRef.current.minLat;
+          const gridMaxLat = gridBoundsRef.current.maxLat;
+          const gridMinLng = gridBoundsRef.current.minLng;
+          const gridMaxLng = gridBoundsRef.current.maxLng;
+          const NUM_BLOCKS = 64;
+
+          const startR = Math.min(NUM_BLOCKS - 1, Math.max(0, Math.floor(((minLatCoord - gridMinLat) / (gridMaxLat - gridMinLat)) * NUM_BLOCKS)));
+          const endR = Math.min(NUM_BLOCKS - 1, Math.max(0, Math.floor(((maxLatCoord - gridMinLat) / (gridMaxLat - gridMinLat)) * NUM_BLOCKS)));
+          const startC = Math.min(NUM_BLOCKS - 1, Math.max(0, Math.floor(((minLngCoord - gridMinLng) / (gridMaxLng - gridMinLng)) * NUM_BLOCKS)));
+          const endC = Math.min(NUM_BLOCKS - 1, Math.max(0, Math.floor(((maxLngCoord - gridMinLng) / (gridMaxLng - gridMinLng)) * NUM_BLOCKS)));
+
+          const newlyEnclosedIds: string[] = [];
+          const blocks = spatialGridRef.current;
+          if (blocks && blocks.length > 0) {
+            for (let r = startR; r <= endR; r++) {
+              for (let c = startC; c <= endC; c++) {
+                const blockCells = blocks[r * NUM_BLOCKS + c] || [];
+                for (let i = 0; i < blockCells.length; i++) {
+                  const cell = blockCells[i];
+                  if (cell.lat >= minLatCoord && cell.lat <= maxLatCoord &&
+                      cell.lng >= minLngCoord && cell.lng <= maxLngCoord) {
+                    newlyEnclosedIds.push(cell.id);
+                  }
+                }
+              }
+            }
+          }
+
+          // Real-time diff highlight styling
+          newlyEnclosedIds.forEach(id => {
+            if (!lastEnclosedTileIds.includes(id)) {
+              highlightEnclosedTile(id);
+            }
+          });
+
+          lastEnclosedTileIds.forEach(id => {
+            if (!newlyEnclosedIds.includes(id)) {
+              restoreTileStyle(id);
+            }
+          });
+
+          lastEnclosedTileIds = newlyEnclosedIds;
+
+          // Track the cursor/touch with the selection indicator count bubble
+          const badge = marqueeIndicatorRef.current;
+          if (badge) {
+            badge.style.left = `${clientX}px`;
+            badge.style.top = `${clientY}px`;
+            const labelNum = document.getElementById('marquee-indicator-count');
+            if (labelNum) labelNum.innerText = String(newlyEnclosedIds.length);
+          }
+        } else {
+          if (!isDraggingSelectionRef.current) return;
+          if (latlng && findClosestCellRef.current) {
+            const closestResult = findClosestCellRef.current(latlng.lat, latlng.lng);
+            if (closestResult && closestResult.cell) {
+              const dLat = closestResult.cell.lat - latlng.lat;
+              const dLng = closestResult.cell.lng - latlng.lng;
+              const squaredDist = dLat * dLat + dLng * dLng;
+              if (squaredDist < 0.00005) {
+                if (handleTileDragSelectRef.current) {
+                  handleTileDragSelectRef.current(closestResult.cell.id);
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Safe failover
+      }
+    };
+
+    const handleGestureEnd = () => {
+      isDraggingSelectionRef.current = false;
+
+      if (multiSelectTool === 'box') {
+        if (isDrawingBox && startLatLng) {
+          try {
+            if (lastEnclosedTileIds.length > 0) {
+              const idsToSelect = [...lastEnclosedTileIds];
+
+              // Update the ref synchronously so that any styling functions called during the same
+              // tick will immediately evaluate these tile IDs as officially selected.
+              const nextSelectedIds = [...latestMultiSelectedTileIdsRef.current];
+              idsToSelect.forEach(id => {
+                if (!nextSelectedIds.includes(id)) {
+                  nextSelectedIds.push(id);
+                }
+              });
+              latestMultiSelectedTileIdsRef.current = nextSelectedIds;
+
+              setMultiSelectedTileIds(prev => {
+                const next = [...prev];
+                idsToSelect.forEach(id => {
+                  if (!next.includes(id)) {
+                    next.push(id);
+                  }
+                });
+                return next;
+              });
+
+              // Apply stable highlight styles instantly for a satisfying native interaction feel
+              idsToSelect.forEach(id => {
+                const polygon = polygonLayersRef.current[id];
+                if (polygon) {
+                  const targetTeamName = latestMultiSelectTargetTeamRef.current;
+                  const targetStyle = TEAM_STYLES[targetTeamName] || TEAM_STYLES['None'];
+                  polygon.setStyle({
+                    stroke: true,
+                    color: targetTeamName === 'None' ? '#ffffff' : (targetStyle.color || '#ffffff'),
+                    dashArray: '5, 5',
+                    weight: 2.5,
+                    fillColor: targetTeamName === 'None' ? 'transparent' : (targetStyle.color || 'transparent'),
+                    fillOpacity: targetTeamName === 'None' ? 0 : 0.35
+                  });
+                }
+              });
+
+              setToast({
+                message: `Selected ${idsToSelect.length} sectors! 🧩`,
+                description: "Corner-to-corner marquee drag-box selection succeeded.",
+                type: "success"
+              });
+            }
+          } catch (e) {
+            console.error("Drag box evaluation error:", e);
+          }
+        }
+        
+        // Clean up visual elements
+        if (visualBox) {
+          mapInstance.removeLayer(visualBox);
+          visualBox = null;
+        }
+        if (startAnchorMarker) {
+          mapInstance.removeLayer(startAnchorMarker);
+          startAnchorMarker = null;
+        }
+        const badge = marqueeIndicatorRef.current;
+        if (badge) {
+          badge.style.display = 'none';
+        }
+
+        // Restore styles of any cells that are not actually part of the selection
+        const committedIds = [...lastEnclosedTileIds];
+        committedIds.forEach(id => {
+          restoreTileStyle(id); // Re-syncs perfectly with the new state
+        });
+        
+        isDrawingBox = false;
+        startLatLng = null;
+        lastEnclosedTileIds = [];
+      }
+    };
+
+    // Touch interaction handlers supporting multi-touch pinch to zoom
+    const onTouchStart = (e: TouchEvent) => {
+      // Safeguard: strictly allow only 1 finger to select. Two fingers or more triggers zoom/pan
+      if (e.touches && e.touches.length >= 2) {
+        isDraggingSelectionRef.current = false;
+        isDrawingBox = false;
+        if (visualBox) {
+          mapInstance.removeLayer(visualBox);
+          visualBox = null;
+        }
+        if (startAnchorMarker) {
+          mapInstance.removeLayer(startAnchorMarker);
+          startAnchorMarker = null;
+        }
+        const badge = marqueeIndicatorRef.current;
+        if (badge) badge.style.display = 'none';
+        return; // Let native Leaflet pinch-to-zoom execute!
+      }
+      if (e.touches && e.touches.length === 1) {
+        handleGestureStart(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches && e.touches.length >= 2) {
+        isDraggingSelectionRef.current = false;
+        isDrawingBox = false;
+        if (visualBox) {
+          mapInstance.removeLayer(visualBox);
+          visualBox = null;
+        }
+        if (startAnchorMarker) {
+          mapInstance.removeLayer(startAnchorMarker);
+          startAnchorMarker = null;
+        }
+        const badge = marqueeIndicatorRef.current;
+        if (badge) badge.style.display = 'none';
+        return; // Don't block zoom
+      }
+      if (e.touches && e.touches.length === 1) {
+        handleGestureMove(e.touches[0].clientX, e.touches[0].clientY);
+        // Only prevent default on 1 touch to block map panning while choosing tiles
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+      }
+    };
+
+    // Mouse interaction handlers
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return; // Left click only
+      handleGestureStart(e.clientX, e.clientY);
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      handleGestureMove(e.clientX, e.clientY);
+    };
+
+    // Hook listeners directly on the map container element
+    container.addEventListener('touchstart', onTouchStart, { passive: false });
+    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    container.addEventListener('touchend', handleGestureEnd, { passive: true });
+    container.addEventListener('touchcancel', handleGestureEnd, { passive: true });
+
+    container.addEventListener('mousedown', onMouseDown, { passive: true });
+    window.addEventListener('mousemove', onMouseMove, { passive: true });
+    window.addEventListener('mouseup', handleGestureEnd, { passive: true });
+
+    return () => {
+      if (wasDraggingEnabled && mapInstance.dragging) {
+        mapInstance.dragging.enable();
+      }
+
+      container.removeEventListener('touchstart', onTouchStart);
+      container.removeEventListener('touchmove', onTouchMove);
+      container.removeEventListener('touchend', handleGestureEnd);
+      container.removeEventListener('touchcancel', handleGestureEnd);
+
+      container.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', handleGestureEnd);
+      
+      if (visualBox) {
+        mapInstance.removeLayer(visualBox);
+      }
+      if (startAnchorMarker) {
+        mapInstance.removeLayer(startAnchorMarker);
+      }
+      const badge = marqueeIndicatorRef.current;
+      if (badge) {
+        badge.style.display = 'none';
+      }
+    };
+  }, [isMultiSelectMode, multiSelectTool]);
 
   // Synchronise customUser with loggedInUser
   useEffect(() => {
@@ -2997,28 +3382,54 @@ export default function App() {
 
     if (type === 'social' && socialName) {
       title = `${socialName} Integration`;
-      content = `Kerala Football Fans connection for ${socialName} has been initialized successfully. In this sandbox preview, all social integrations are simulated so that you can view and test the deep link sharing experience without real tracking trackers or APIs. Use the copy deep link option to share with physical friends!`;
+      content = `Kerala Football Fans integration for ${socialName} has been initialized successfully. In this sandbox preview, all social integrations are simulated so that you can view and test the deep link sharing experience without real tracking trackers or APIs. Use the copy deep link option to share with physical friends!`;
     } else if (type === 'blog') {
-      title = `⚽ Grassroots Football Blog`;
-      content = `Welcome to the official Football Map blog network! Here we report on the ultimate grassroots football wars from Kozhikode and Malappuram, to Kochi and Greenfield. Fans have pledged massive simulated flags, built merged super-grids, and shared real-time coordinates. Stay tuned as more communities assert their soccer religion!`;
+      title = `⚽ Grassroots Football Blog & Turf Guide`;
+      content = `Explore our expert-curated SEO articles, regional pitch reviews, and district tournament highlights across Kerala's ultimate grassroots soccer network.
+
+🏆 Guide 1: Ultimate Guide to Kerala Sevens Football & Fan Club Ecosystem
+Kerala Sevens football is the heartbeat of local communities. From Malappuram to Kozhikode, floodlit mud and sand pitches host thrilling high-speed matches attracting thousands of passionate spectators. Learn how grassroots fan clusters secure regional territories, promote regional soccer tournaments, and sustain local football nurseries that produce national-level athletes.
+
+📍 Guide 2: Top Artificial Football Turfs in Kozhikode, Kochi, & Malappuram
+Searching for the best premium 5-a-side and 7-a-side artificial sports grounds in Kerala? Read our comprehensive analysis of synthetic grass fields, including GIS coordinate locations, booking prices, floodlight specifications, and club tier ratings. Find the nearest municipal school grounds or beachfront turfs in our interactive spatial directory.
+
+🤝 Guide 3: How to Build, Claim, and Merge Joint Fan Club Alliances Online
+Unite your school football clubs and local groups under a single digital flag! This strategic guide breaks down how fans in Cochin, Greenfield, and Kannur utilize interactive coordinate maps to declare team colors, share real-time GPS location links, and merge adjacent grid tiles to form massive district-wide coalitions.`;
     } else if (type === 'privacy') {
       title = `🛡️ Privacy Policy`;
-      content = `Your privacy is our shared sports team standard. All custom modifications, local chats, and image snapshots you upload are kept entirely client-side, persisting securely inside your browser's local sandbox storage index. No cookies or personal metrics are exported to external cloud databases without direct permission.`;
+      content = `Your privacy and security are backed by our production-grade architecture. We treat your spatial data, coordinates, and team preferences with enterprise-level transparency:
+
+1. Secure Supabase Backend: Custom coordinates, active username aliases, and unlocked territory records are synchronized using real-time PostgreSQL database layers powered by Supabase. All cloud connections are protected with robust Row-Level Security (RLS) policies and JWT authentication.
+2. Cloudflare Network Protection: Our application is accelerated and shielded by Cloudflare's Edge Network, ensuring ultra-low latency tile delivery, robust Web Application Firewall (WAF) threat shielding, and automated DDoS mitigation globally.
+3. Local Cache & Control: Transient interactive states remain client-side in browser storage. You can securely clear localized data, reset club selections, or delete active sessions anytime through the settings panel to wipe all stored client configurations instantly.`;
     } else if (type === 'refund') {
-      title = `💸 Refund Policy & Simulator Rules`;
-      content = `Each territory claim transaction on the Kerala Fan Map is a fully simulated payment sandbox for testing. Since zero real currency (INR) is processed, any refund request is instantly, automatically approved in real-time. Feel safe mapping out massive sections of soccer territory!`;
+      title = `💸 Refund Policy`;
+      content = `We want you to be completely satisfied with your claimed map tile sectors. Our product-level refund policy ensures a fair and transparent process:
+
+1. 24-Hour Refund Window: You can request a full refund for any claimed map tile sector within exactly 24 hours of the locking transaction. Refund requests submitted within this 24-hour window are processed automatically.
+2. Eligibility & State Reset: Once a refund is initiated, the selected tile sector is immediately unlocked and returned to the public pool, allowing other local fan alliances to claim or color it.
+3. Automated Sandbox Processing: Since all billing is safely simulated, refunds are credited back to your virtual wallet balance instantly in real-time, with zero processing delay or transactional overhead.`;
     } else if (type === 'terms') {
-      title = `📜 Terms & Conditions`;
-      content = `By pledging support to Kerala's shared soccer grid, you promise to uphold the spirit of clean sportsmanship. Do not merge clusters in malicious patterns, use descriptive and respectable labels for coordinates, and celebrate every team and fan community. Soccer is Kerala's ultimate religion—let's honor it together!`;
+      title = `📜 Terms of Service`;
+      content = `Welcome to Football Fanland! By accessing our interactive GIS map, claiming territorial sectors, and interacting with regional communities, you agree to comply with our production-grade Terms of Service:
+
+1. Territoral Sector Claims & Rates: Map tiles may be claimed and locked for exactly 10 Rupees per sector. All currency processing on this GIS platform is powered by sandbox-simulated payment pathways for evaluation, testing, and grassroots visualization.
+2. 24-Hour Refund Mechanism: Every claimed tile transaction is eligible for our product-level 24-hour window refund. If requested within 24 hours, the transaction is reversed, the sector's locked coordinates are reset to the public pool, and the simulated balance is returned immediately.
+3. System Synchronization & Security: Real-time map data is stored securely using Supabase (PostgreSQL with strict Row-Level Security policies) and accelerated via the Cloudflare Edge Network. Any attempts to bypass security controls, inject malicious scripts, or trigger artificial DDoS request arrays will result in automatic network disqualification.
+4. Community & Sportsmanship Code: Users agree to maintain fair sportsmanship. Obstructive grouping, grid framing of derogatory symbols, offensive coordinate labeling, or abusive spatial chats will be subject to local review and immediate coordinate reset. Let us honor Kerala's gorgeous soccer heritage with absolute respect!`;
     } else if (type === 'about') {
-      title = `ℹ️ About Football Map`;
-      content = `We are developers, football fans, and cartographers who believe that grassroots soccer is the pure fuel of Kerala. This interactive portal maps 242,827 geographical sectors across Kerala’s districts, letting you claim territorial dominance, merge grids with neighbor fan alliances, decorate custom pitches, and chat live with regional rivals.`;
+      title = `ℹ️ About Football Fanland`;
+      content = `We are developers, football fans, and cartographers who believe that grassroots soccer is the pure fuel of Kerala. This interactive portal maps over 240,000 geographical sectors across Kerala’s districts, letting you claim territorial dominance, merge grids with neighbor fan alliances, decorate custom pitches, and chat live with regional rivals.`;
     } else if (type === 'careers') {
       title = `💼 Join the Fans Team`;
       content = `Interested in building the future of sports visualization? Even though we are a virtual project, we are always on the lookout for creative React developers, GIS spatial analysts, and avid football aficionados. Feel free to clone this sandbox and pitch your high-fidelity contributions!`;
     } else if (type === 'support') {
-      title = `💬 Help & Fan Support`;
-      content = `Encountering an issue claiming your custom physical coordinates? Need assistance resetting local storage state or correcting custom club flags? Drop us an inquiry anytime! Our team of simulated ground monitors is available 24/7 to resolve spatial grids and team flag claims.`;
+      title = `💬 24/7 Help & Support Center`;
+      content = `Need immediate assistance navigating the physical coordinates or customizing your club colors? Our dedicated 24/7 Support Team is always on standby to assist you:
+
+✦ 24/7 Help Desk Access: Submit questions, report coordinate alignment issues, or request custom club configurations at any hour of the day. We are here round-the-clock to keep your grassroots pitch mapping fully operational!
+✦ Grid Sync Troubleshooting: If your custom color paintings or claimed sectors are not rendering, verify that local storage permissions are enabled for this site.
+✦ Territory Recovery: Since data is stored client-side in browser memory, you can back up or share your current territory layout by copying deep links from individual grid control panels anytime.`;
     } else if (type === 'submit_ground') {
       title = `🏟️ Submit Local Pitch Coordinates`;
       content = `Know a beautiful local municipal field, beach football turf, or local school ground not currently marked in our Kerala GIS model? Submit the coordinates or sector ID! We regularly verify layout inputs from fans to elevate grassroots spaces.`;
@@ -3026,17 +3437,36 @@ export default function App() {
       title = `🏆 Football Religion Leaderboard`;
       content = `The Football Religion Leaderboard brings together Kerala's fiercest fan groups (Yellow Army, Red Giants, Blues Alliance, Green Eagles, and others) by calculating occupied grids, active live chat vibes, and district coverage in real-time. Boost your favorite club now by asserting claims on available land or consolidating merged super-grids with neighboring sectors!`;
     } else if (type === 'features') {
-      title = `⚡ Map Features & Fan Tools`;
-      content = `Discover our key features designed for sports enthusiasts across Kerala:\n\n1. Fan Sector Claims: Select and lock down grid squares within Kerala boundaries to declare your club allegiance.\n2. Live Talk Chat Feed: Broadcast real-time sandbox shoutouts dynamically bound to physical territory coordinates.\n3. Sports Arena Penalty Game: Test your penalty shooting skills in our virtual scoreboard games and district rankings.\n4. Advanced Spatial Tracking: Search specific places, districts, or coordinates instantly with integrated GPS localization.`;
+      title = `⚡ Features & Technical Specifications`;
+      content = `Discover our full suite of technical features designed for sports enthusiasts across Kerala:
+
+1. Fan Sector Claims: Select and lock down grid squares within Kerala boundaries to declare your club allegiance.
+2. Dual Multi-Select Tools: Use "Brush Paint Select" to sweep across adjacent tiles, or "Box Select" to capture massive areas visually.
+3. Interactive Live Talk: Broadcast real-time sandbox messages tied directly to your physical territory coordinates.
+4. Live Region Statistics: Deep dive into real-time statistics covering territory dominance percentiles and district leaders.`;
     } else if (type === 'pricing') {
-      title = `💎 Fan Grid Claiming & Pricing`;
-      content = `Football Map Kerala is 100% free and open-source for grassroots sports lovers!\n\nFor advanced club custom branding options, automated team news feeds, and professional player representation panels, we offer a simulated premium VIP tier subscription at exactly 0 INR (Kerala Rupees). Claim, paint, and customize any territorial zone without any financial charges!`;
+      title = `💎 Pricing`;
+      content = `Each map tile sector can be claimed and locked for exactly 10 Rupees.`;
     } else if (type === 'faqs') {
       title = `❓ Frequently Asked Questions`;
-      content = `Q: How do I claim a geographical sector?\nA: Simply navigate to any unclaimed tile inside Kerala, click it, input your custom club or fan lobby label, and click 'Lock Fan Territory'!\n\nQ: Does caching affect my claims?\nA: Yes! This is a client-side sandbox platform, meaning all coordinates and messages are cached locally inside your browser's index database. Clearing cache resets claims.\n\nQ: Is this real or simulated?\nA: This is a 100% simulated GIS sandbox honoring Kerala's beautiful grassroots sports culture! No real payment or billing systems exist in this application.\n\nQ: Can I collaborate with friends?\nA: Absolutely! Share your deep links or copy sector IDs so other local fans can find and claim neighboring tiles to build a large Fan Union.`;
+      content = `Q: How do I claim a geographical sector on the map?
+A: Simply navigate to any unclaimed tile inside Kerala, click it, input your custom club or fan lobby label, select your team affiliation, and click 'Lock Fan Territory'.
+
+Q: How do the Brush and Box selection tools work?
+A: In Multiselect Mode, use the 'Brush' tool to sweep across adjacent tiles to paint them, or switch to the 'Box' tool to draw a corner-to-corner marquee drag-box to instantly select a large group of tiles!
+
+Q: How much does it cost to claim a map tile sector?
+A: Each map tile sector can be claimed and locked for exactly 10 Rupees.
+
+Q: How do I get support for coordinating or syncing tiles?
+A: For assistance with territory recovery or grid alignment, check our Support Center in the footer or submit an inquiry to our 24/7 dedicated Contact Desk.`;
     } else if (type === 'contact') {
-      title = `📨 Contact Fan Support`;
-      content = `Have a question, feedback, or custom municipal stadium coordinates to suggest?\n\nConnect with our simulated monitoring desk or send an inquiry to contact@keralafootballmap.com. Our virtual field monitors are active round the clock to keep Kerala's ultimate football map running beautifully!`;
+      title = `📨 Contact & Operations Desk`;
+      content = `Have a question about your claimed sectors, spatial grid sync, simulated payments, or local football turf coordinates? Get in touch with our operations desk:
+
+✦ 24/7 Operations Support: Our operations monitoring desk is fully online around the clock. Open a technical ticket for grid sync anomalies, regional lock conflicts, or club flag approvals.
+✦ Billing & Refunds Department: Enquiring about our 10 Rupees tile locks or looking to leverage the 24-Hour Refund window? Contact billing inside the refund window for automated instant balance reversals.
+✦ Infrastructure & GIS Team: Report coordinate alignment suggestions, API server issues on the Supabase backend, or edge routing troubles on the Cloudflare CDN to contact@keralafootballfanland.com.`;
     }
 
     setActiveFooterModal({ type, title, content });
@@ -3726,10 +4156,7 @@ export default function App() {
   // Success Mock Payment handler - processes simulated cash/Rupee tile purchases!
   const executeSimulatedPayment = () => {
     const qty = slotPurchaseCount || 1;
-    const basePrice = qty * 10;
-    const discountPct = qty > 10 ? 10 : 0;
-    const discountVal = basePrice * (discountPct / 100);
-    const finalPrice = basePrice - discountVal;
+    const finalPrice = qty * 10;
 
     // If it was a multi-selected checkout, immediately complete the batch simulated payment and close the modal!
     if (isMultiSelectCheckout && pendingTeam !== 'None') {
@@ -3770,7 +4197,7 @@ export default function App() {
 
       setToast({
         message: "Territory Secured! 🗺️💳",
-        description: `Sector ${selectedTileId} claimed! Simulated transaction of ₹${finalPrice.toFixed(2)} complete.${qty > 10 ? ' (Includes 10% bulk discount!)' : ''}`,
+        description: `Sector ${selectedTileId} claimed! Simulated transaction of ₹${finalPrice.toFixed(2)} complete.`,
         type: "success"
       });
     }
@@ -4042,10 +4469,7 @@ export default function App() {
         ? activeData.mergedWith
         : (selectedTileId ? [selectedTileId] : []);
     const N = targetTileIds.length;
-    const basePrice = N * 10;
-    const bulkDiscountPct = N > 10 ? 10 : 0;
-    const bulkDiscountVal = basePrice * (bulkDiscountPct / 100);
-    const finalBatchPrice = basePrice - bulkDiscountVal;
+    const finalBatchPrice = N * 10;
 
     const ownerName = loggedInUser ? loggedInUser.username : 'Guest';
 
@@ -4990,6 +5414,10 @@ export default function App() {
 
   const { tallies, tallyMap, claimedCount } = getLeaderboardStats();
 
+  // Sync latest functions in mutable refs to keep listeners completely free of stale closures
+  handleTileDragSelectRef.current = handleTileDragSelect;
+  findClosestCellRef.current = findClosestCell;
+
   return (
     <div className="relative w-full h-screen bg-[#0b0f19] text-white font-sans overflow-hidden select-none">
       
@@ -5002,6 +5430,19 @@ export default function App() {
         className={`w-full h-full z-0 transition-opacity duration-300 absolute inset-0 ${activePage === 'map' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'} ${isMultiSelectMode && multiSelectTool === 'box' ? 'multi-select-box-tool-active' : ''}`}
         style={{ opacity: isLoading ? 0.3 : 1 }}
       />
+
+      {/* Dynamic High-Fidelity Marquee Selection HUD Badge */}
+      <div
+        ref={marqueeIndicatorRef}
+        className="pointer-events-none absolute z-50 hidden bg-[#0b0f19]/90 text-amber-400 font-mono font-bold text-[11px] px-3 py-1.5 rounded-xl shadow-[0_12px_40px_-4px_rgba(245,158,11,0.35)] border border-amber-500/40 items-center gap-2 backdrop-blur-md ring-1 ring-white/5"
+        style={{ transform: 'translate(15px, 15px)' }}
+        id="drag-marquee-overlay"
+      >
+        <span className="w-2 h-2 bg-amber-500 rounded-full animate-ping shrink-0" />
+        <span className="tracking-wide uppercase text-slate-400">SELECTING:</span> 
+        <span id="marquee-indicator-count" className="font-extrabold bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded text-xs leading-none">0</span> 
+        <span className="text-slate-400">TILES</span>
+      </div>
 
       {/* Loading Overlay spinner */}
       {isLoading && (
@@ -5022,12 +5463,7 @@ export default function App() {
           <div className="absolute top-3 md:top-4 left-3 md:left-4 right-3 md:right-auto z-10 max-w-full md:max-w-md pointer-events-none">
         <div className={`pointer-events-auto bg-slate-950/60 border border-slate-800/40 rounded-2xl shadow-[0_12px_45px_-8px_rgba(0,0,0,0.8)] backdrop-blur-xl ring-1 ring-white/5 flex flex-col transition-all duration-300 ${isHeaderCollapsed ? 'p-3 md:p-3.5 gap-0' : 'p-4 md:p-5 gap-3'}`}>
           
-          {/* Animated Soccer Joggle Rivalry Loop */}
-          {!isHeaderCollapsed && (
-            <div className="w-full mb-1">
-              <CharacterAnimationLoop />
-            </div>
-          )}
+
 
           {/* Dynamic Unified Header with Login Option */}
           <div 
@@ -5039,7 +5475,7 @@ export default function App() {
           >
             <div>
               <h1 className="text-base md:text-lg font-bold text-slate-100 flex items-center gap-1.5 leading-none">
-                Football Map
+                Football Fanland
                 {isHeaderCollapsed ? (
                   <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                 ) : (
@@ -5309,7 +5745,7 @@ export default function App() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span>Football Map Kerala &copy; 2026</span>
+              <span>Football Fanland &copy; 2026</span>
             </div>
             <div className="flex items-center gap-1.5 text-slate-400 text-[10px]">
               <span>{footerCollapsed ? "Expand Info" : "Collapse Info"}</span>
@@ -5340,14 +5776,21 @@ export default function App() {
                   onClick={() => handleOpenFooterModal('pricing')}
                   className="hover:text-emerald-400 hover:underline cursor-pointer text-left font-mono text-[11px] transition-colors text-slate-350"
                 >
-                  ✦ Pricing Plans
+                  ✦ Pricing
                 </button>
                 <button 
                   type="button"
                   onClick={() => handleOpenFooterModal('faqs')}
                   className="hover:text-emerald-400 hover:underline cursor-pointer text-left font-mono text-[11px] transition-colors text-slate-350"
                 >
-                  ✦ FAQs & Support
+                  ✦ FAQs
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => handleOpenFooterModal('support')}
+                  className="hover:text-emerald-400 hover:underline cursor-pointer text-left font-mono text-[11px] transition-colors text-slate-350"
+                >
+                  ✦ 24/7 Support
                 </button>
               </div>
 
@@ -5470,15 +5913,15 @@ export default function App() {
                   {(() => {
                     const activeTileData = tiles[selectedTileId!];
                     let tileCount = 1;
-                    let coinValue = 15;
+                    let coinValue = 10;
 
                     if (isMultiSelectMode && multiSelectedTileIds.length > 0) {
                       tileCount = multiSelectedTileIds.length;
-                      coinValue = tileCount * 15;
+                      coinValue = tileCount * 10;
                     } else if (activeTileData) {
                       const isMerged = activeTileData.mergedWith && activeTileData.mergedWith.length > 0;
                       tileCount = isMerged ? activeTileData.mergedWith.length : 1;
-                      coinValue = isMerged ? activeTileData.mergedWith.length * 15 + 10 : 15;
+                      coinValue = tileCount * 10;
                     }
 
                     return (
@@ -5547,43 +5990,43 @@ export default function App() {
                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex flex-col gap-2 shadow-inner">
                       <div className="flex justify-between items-center text-[10px] font-mono text-amber-400 font-bold">
                         <span className="flex items-center gap-1">
-                          {multiSelectTool === 'brush' ? '🖌️ Brush Select Mode' : '📐 Drag Box Mode'}
+                          🛠️ Selection Tool
                         </span>
                         <span className="bg-amber-500 text-slate-950 font-extrabold px-1.5 py-0.5 rounded-full text-[9px]">
                           {multiSelectedTileIds.length} Selected
                         </span>
                       </div>
 
-                      {/* Selector Tool Switcher tab-row */}
-                      <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-850 gap-1 my-0.5">
+                      {/* Clean segment controller tool switcher */}
+                      <div className="grid grid-cols-2 bg-slate-950 p-1 rounded-xl border border-slate-800 gap-1 my-0.5">
                         <button
                           type="button"
                           onClick={() => setMultiSelectTool('brush')}
-                          className={`flex-1 py-1 px-1.5 rounded-lg text-[9px] font-mono font-bold uppercase transition-all tracking-wide flex items-center justify-center gap-1 cursor-pointer ${
+                          className={`py-1.5 px-2 rounded-lg text-[9px] font-mono font-bold uppercase transition-all tracking-wide flex items-center justify-center gap-1 cursor-pointer ${
                             multiSelectTool === 'brush'
-                              ? 'bg-amber-500 text-slate-950 font-black shadow-sm font-extrabold'
+                              ? 'bg-amber-500 text-slate-950 font-black'
                               : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
                           }`}
                         >
-                          <span>🖌️ Brush</span>
+                          <span>🖌️ Brush Paint</span>
                         </button>
                         <button
                           type="button"
                           onClick={() => setMultiSelectTool('box')}
-                          className={`flex-1 py-1 px-1.5 rounded-lg text-[9px] font-mono font-bold uppercase transition-all tracking-wide flex items-center justify-center gap-1 cursor-pointer ${
+                          className={`py-1.5 px-2 rounded-lg text-[9px] font-mono font-bold uppercase transition-all tracking-wide flex items-center justify-center gap-1 cursor-pointer ${
                             multiSelectTool === 'box'
-                              ? 'bg-amber-500 text-slate-950 font-black shadow-sm font-extrabold'
+                              ? 'bg-amber-500 text-slate-950 font-black'
                               : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
                           }`}
                         >
-                          <span>📐 Drag Box</span>
+                          <span>📐 Corner Box</span>
                         </button>
                       </div>
 
-                      <p className="text-[9px] text-slate-400 font-mono leading-relaxed">
-                        {multiSelectTool === 'brush' 
-                          ? 'Tap grids individually or drag/paint your cursor/finger over cells to highlight them!'
-                          : 'Click anywhere on the map, hold and drag a rectangle box, then release to select multiple grids at once!'
+                      <p className="text-[9px] text-slate-400 font-mono leading-relaxed my-0.5">
+                        {multiSelectTool === 'brush'
+                          ? 'Tap grids individually or swipe your cursor/finger over cells to paint highlight!'
+                          : 'Press and drag a visual box from one corner to any other diagonally, then release to highlight!'
                         }
                       </p>
                       {multiSelectedTileIds.length > 0 && (
@@ -5944,19 +6387,9 @@ export default function App() {
                                     <span>Base Rate:</span>
                                     <span className="text-slate-300">₹10.00 / Tile</span>
                                   </div>
-                                  {activeCount > 10 && (
-                                    <div className="flex justify-between text-emerald-300 text-[8px]">
-                                      <span>Bulk Discount:</span>
-                                      <span>10% Off (&gt;10 Tiles)</span>
-                                    </div>
-                                  )}
                                   <div className="flex justify-between font-bold text-emerald-400 mt-1 pt-1 border-t border-dashed border-slate-900">
                                     <span>Total Price:</span>
-                                    <span>₹{(() => {
-                                      const base = activeCount * 10;
-                                      const discountVal = activeCount > 10 ? base * 0.10 : 0;
-                                      return (base - discountVal).toFixed(2);
-                                    })()}</span>
+                                    <span>₹{(activeCount * 10).toFixed(2)}</span>
                                   </div>
                                 </div>
                               </div>
@@ -5973,7 +6406,7 @@ export default function App() {
                                   }}
                                   className="w-full py-2 bg-gradient-to-tr from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-extrabold rounded-xl text-[10px] transition-all shadow-lg flex items-center justify-center gap-1 cursor-pointer uppercase tracking-wider font-sans"
                                 >
-                                  💳 Secure Sector(s) ({activeCount > 10 ? '10% Off' : `₹${(activeCount * 10).toFixed(0)}`})
+                                  💳 Secure Sector(s) (₹{(activeCount * 10).toFixed(0)})
                                 </button>
                               </div>
 
@@ -6494,9 +6927,7 @@ export default function App() {
                 {/* Cost Breakdown Panels */}
                 {(() => {
                   const qty = isMultiSelectCheckout ? slotPurchaseCount : 1;
-                  const baseCash = qty * 10;
-                  const cashDiscount = qty > 10 ? baseCash * 0.10 : 0;
-                  const finalCash = baseCash - cashDiscount;
+                  const finalCash = qty * 10;
 
                   return (
                     <>
@@ -6539,11 +6970,6 @@ export default function App() {
                               <CreditCard className="w-3.5 h-3.5 text-emerald-400" />
                               <span className="text-[8px] text-slate-400 tracking-wider">OPTION B: INR CHECKOUT</span>
                             </span>
-                            {qty > 10 && (
-                              <span className="text-[9px] text-emerald-400 font-bold bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-900">
-                                10% OFF
-                              </span>
-                            )}
                           </div>
                           <div className="text-[10px] text-slate-450 leading-tight flex flex-col gap-0.5">
                             <div className="flex justify-between">
@@ -6554,12 +6980,6 @@ export default function App() {
                               <span>Price per Sector:</span>
                               <span className="text-slate-300">₹10.00</span>
                             </div>
-                            {qty > 10 && (
-                              <div className="flex justify-between text-emerald-400">
-                                <span>Bulk Discount:</span>
-                                <span>-₹{cashDiscount.toFixed(2)}</span>
-                              </div>
-                            )}
                             <div className="flex justify-between border-t border-slate-900 pt-1 mt-1 font-bold text-emerald-400">
                               <span>Total Cash Price:</span>
                               <span>₹{finalCash.toFixed(2)}</span>
@@ -7605,8 +8025,8 @@ export default function App() {
           const ownerRanking = rankings.find(r => r.username === ownerName);
           const totalTilesEarned = ownerRanking ? ownerRanking.tiles : 1;
           const tileValue = (ownerEngagementTile.mergedWith && ownerEngagementTile.mergedWith.length > 0) 
-            ? ownerEngagementTile.mergedWith.length * 15 + 10 
-            : 15;
+            ? ownerEngagementTile.mergedWith.length * 10 
+            : 10;
           const dicebearSeed = encodeURIComponent(ownerName);
           const profilePhotoUrl = `https://api.dicebear.com/7.x/identicon/svg?seed=${dicebearSeed}`;
           const teamColorStyle = TEAM_STYLES[ownerEngagementTile.team || 'None'] || TEAM_STYLES['None'];
@@ -7756,10 +8176,10 @@ export default function App() {
                 <label className="text-[10px] font-mono text-slate-450 uppercase block mb-1">Select Claim Slots Bundle</label>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { count: 1, price: 10, save: 0 },
-                    { count: 3, price: 25, save: 5 },
-                    { count: 5, price: 40, save: 10 },
-                    { count: 10, price: 75, save: 25 }
+                    { count: 1, price: 10 },
+                    { count: 3, price: 30 },
+                    { count: 5, price: 50 },
+                    { count: 10, price: 100 }
                   ].map((pkg) => (
                     <button
                       key={pkg.count}
@@ -7772,9 +8192,6 @@ export default function App() {
                     >
                       <div className="text-xs font-bold block">{pkg.count} Claim {pkg.count === 1 ? 'Slot' : 'Slots'}</div>
                       <div className="text-sm font-black font-mono text-teal-450 mt-1">₹{pkg.price}</div>
-                      {pkg.save > 0 && (
-                        <span className="text-[8px] bg-emerald-500/10 text-emerald-450 px-1 py-0.5 rounded uppercase font-bold mt-1 inline-block border border-emerald-500/10">Save ₹{pkg.save}</span>
-                      )}
                     </button>
                   ))}
                 </div>
@@ -7797,7 +8214,7 @@ export default function App() {
                     setPurchaseLoading(true);
                     setTimeout(() => {
                       setPurchaseLoading(false);
-                      const cost = slotsToBuy === 1 ? 10 : slotsToBuy === 3 ? 25 : slotsToBuy === 5 ? 40 : 75;
+                      const cost = slotsToBuy * 10;
                       const nextSlotsValue = freeSlots + slotsToBuy;
                       setFreeSlots(nextSlotsValue);
                       localStorage.setItem('kerala_claimed_free_slots_count', nextSlotsValue.toString());
@@ -7814,7 +8231,7 @@ export default function App() {
                   {purchaseLoading ? (
                     <span className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
                   ) : (
-                    <span>Pay ₹{slotsToBuy === 1 ? 10 : slotsToBuy === 3 ? 25 : slotsToBuy === 5 ? 40 : 75} Now</span>
+                    <span>Pay ₹{slotsToBuy * 10} Now</span>
                   )}
                 </button>
               </div>
