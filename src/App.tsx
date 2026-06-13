@@ -572,6 +572,39 @@ const saveClaimedTiles = (tilesData: Record<string, TileData>) => {
 };
 
 // Performance cache to prevent heavy grid calculations and GeoJSON requests on every mount
+const KERALA_FALLBACK_GEOJSON = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { name: "Kerala Fallback Bound" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [74.9, 12.8],
+            [75.1, 12.8],
+            [75.5, 12.2],
+            [76.0, 11.5],
+            [76.3, 10.8],
+            [76.8, 10.2],
+            [77.2, 9.5],
+            [77.5, 8.5],
+            [77.3, 8.2],
+            [77.0, 8.3],
+            [76.5, 9.2],
+            [76.1, 10.0],
+            [75.7, 10.8],
+            [75.2, 11.6],
+            [74.8, 12.3],
+            [74.9, 12.8]
+          ]
+        ]
+      }
+    }
+  ]
+};
+
 let cachedKeralaData: any = null;
 let cachedRenderFeature: any = null;
 let cachedAllCells: any[] | null = null;
@@ -691,7 +724,7 @@ export default function App() {
   // Input States for Drawer
   const [tempTeam, setTempTeam] = useState<TeamChoice>('None');
   const [hasSelectedTeamInSession, setHasSelectedTeamInSession] = useState<boolean>(false);
-  const [drawerActiveWindow, setDrawerActiveWindow] = useState<'team_select' | 'addons_and_payment'>('team_select');
+  const [drawerActiveWindow, setDrawerActiveWindow] = useState<'initial_slots' | 'team_select' | 'addons_and_payment' | 'checkout'>('initial_slots');
   const [chatInput, setChatInput] = useState('');
   const [customUser, setCustomUser] = useState('SuperFan ⚽');
   const [copiedSecId, setCopiedSecId] = useState(false);
@@ -1115,8 +1148,8 @@ export default function App() {
 
   // Multi-select / Merge and custom style states
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
-  const [multiSelectTool, setMultiSelectTool] = useState<'brush' | 'box'>('brush');
-  const multiSelectToolRef = useRef<'brush' | 'box'>('brush');
+  const [multiSelectTool, setMultiSelectTool] = useState<'brush' | 'box'>('box');
+  const multiSelectToolRef = useRef<'brush' | 'box'>('box');
   useEffect(() => {
     multiSelectToolRef.current = multiSelectTool;
   }, [multiSelectTool]);
@@ -2313,38 +2346,8 @@ export default function App() {
     });
     dragArrowMarkersRef.current = {};
 
-    if (!isMultiSelectMode || multiSelectedTileIds.length === 0) {
-      return;
-    }
-
-    multiSelectedTileIds.forEach(id => {
-      const cell = allCellsRef.current.find(c => c.id === id);
-      if (!cell) return;
-
-      const arrowIcon = (window as any).L.divIcon({
-        html: `
-          <div class="relative flex items-center justify-center pointer-events-none select-none">
-            <span class="animate-ping absolute inline-flex h-8 w-8 rounded-full bg-amber-500/30 opacity-75"></span>
-            <div class="relative z-10 flex items-center justify-center w-7 h-7 rounded-full bg-slate-950 border-2 border-amber-500 shadow-[0_4px_12px_rgba(245,158,11,0.4)] transition-all transform hover:scale-110">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4 text-amber-400">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v18M3 12h18M12 3l3 3M12 3L9 6M12 21l3-3M12 21l-3-3M3 12l3 3M3 12l3-3M21 12l-3 3M21 12l-3-3" />
-              </svg>
-            </div>
-          </div>
-        `,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14],
-        className: 'leaflet-drag-arrow-marker pointer-events-none select-none'
-      });
-
-      const marker = (window as any).L.marker([cell.lat, cell.lng], {
-        icon: arrowIcon,
-        interactive: false,
-        pane: 'markerPane'
-      }).addTo(mapInstance);
-
-      dragArrowMarkersRef.current[id] = marker;
-    });
+    // User requested to remove all symbols inside the tiles, so we bypass rendering individual arrow markers
+    return;
 
     return () => {
       Object.keys(dragArrowMarkersRef.current).forEach(id => {
@@ -2842,16 +2845,17 @@ export default function App() {
 
     // 2. Initialise leaflet map
     if (!mapRef.current) {
-      const worldBounds = (window as any).L.latLngBounds(
-        (window as any).L.latLng(-90, -180),
-        (window as any).L.latLng(90, 180)
+      const keralaBounds = (window as any).L.latLngBounds(
+        (window as any).L.latLng(7.9, 74.3),
+        (window as any).L.latLng(13.1, 77.9)
       );
 
       const map = (window as any).L.map(mapContainerRef.current, {
         zoomControl: false,
         preferCanvas: true,
-        maxBounds: worldBounds,
-        maxBoundsViscosity: 0.1, // Less sticky boundaries when panning around Kerala borders
+        maxBounds: keralaBounds,
+        maxBoundsViscosity: 1.0, // Strict lock boundaries to prevent panning outside Kerala
+        minZoom: 8, // Set minimum zoom level to keep view focused within Kerala
         bounceAtZoomLimits: false,
         inertia: true,
         inertiaDeceleration: 3500,
@@ -2867,7 +2871,7 @@ export default function App() {
         attribution: '&copy; <a href="https://carto.com/">CartoDB</a> contributors',
         maxZoom: 19,
         noWrap: true,
-        bounds: worldBounds,
+        bounds: keralaBounds,
         subdomains: 'abcd',
         keepBuffer: 3,
         updateWhenIdle: true,
@@ -2912,9 +2916,26 @@ export default function App() {
       return;
     }
 
-    // Draw boundary state of Kerala in background
-    fetch('/Kerala.geojson')
-      .then(res => res.json())
+    // Attempt multi-fallback fetch logic for Kerala GeoJSON to prevent sandbox errors
+    const fetchGeoJSONWithFallback = async () => {
+      try {
+        const res = await fetch('/Kerala.geojson');
+        if (!res.ok) throw new Error(`Status ${res.status}`);
+        return await res.json();
+      } catch (err1) {
+        console.warn("Primary path '/Kerala.geojson' failed, attempting relative path 'Kerala.geojson'...", err1);
+        try {
+          const res = await fetch('Kerala.geojson');
+          if (!res.ok) throw new Error(`Status ${res.status}`);
+          return await res.json();
+        } catch (err2) {
+          console.warn("Could not load local Kerala.geojson file; loading pre-built local fallback outline.", err2);
+          return KERALA_FALLBACK_GEOJSON;
+        }
+      }
+    };
+
+    fetchGeoJSONWithFallback()
       .then(keralaData => {
         const turfObj = (window as any).turf;
         let renderFeature = keralaData;
@@ -3211,7 +3232,7 @@ export default function App() {
     setSelectedTileId(id);
     setTempTeam(activeData.team as TeamChoice);
     setHasSelectedTeamInSession(false);
-    setDrawerActiveWindow('team_select');
+    setDrawerActiveWindow('initial_slots');
     setChatInput('');
     setTeamSearchQuery('');
 
@@ -5992,127 +6013,147 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
               </div>
 
 
-              <div className="flex flex-col gap-2.5">
-                {/* Multi-select toggle (add more slots) */}
-                <div>
-                  {isMultiSelectMode ? (
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex flex-col gap-2 shadow-inner">
-                      <div className="flex justify-between items-center text-[10px] font-mono text-amber-400 font-bold">
-                        <span className="flex items-center gap-1">
-                          🛠️ Selection Tool
-                        </span>
-                        <span className="bg-amber-500 text-slate-950 font-extrabold px-1.5 py-0.5 rounded-full text-[9px]">
-                          {multiSelectedTileIds.length} Selected
-                        </span>
-                      </div>
-
-                      {/* Clean segment controller tool switcher */}
-                      <div className="grid grid-cols-2 bg-slate-950 p-1 rounded-xl border border-slate-800 gap-1 my-0.5">
-                        <button
-                          type="button"
-                          onClick={() => setMultiSelectTool('brush')}
-                          className={`py-1.5 px-2 rounded-lg text-[9px] font-mono font-bold uppercase transition-all tracking-wide flex items-center justify-center gap-1 cursor-pointer ${
-                            multiSelectTool === 'brush'
-                              ? 'bg-amber-500 text-slate-950 font-black'
-                              : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
-                          }`}
-                        >
-                          <span>🖌️ Brush Paint</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setMultiSelectTool('box')}
-                          className={`py-1.5 px-2 rounded-lg text-[9px] font-mono font-bold uppercase transition-all tracking-wide flex items-center justify-center gap-1 cursor-pointer ${
-                            multiSelectTool === 'box'
-                              ? 'bg-amber-500 text-slate-950 font-black'
-                              : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
-                          }`}
-                        >
-                          <span>📐 Corner Box</span>
-                        </button>
-                      </div>
-
-                      <p className="text-[9px] text-slate-400 font-mono leading-relaxed my-0.5">
-                        {multiSelectTool === 'brush'
-                          ? 'Tap grids individually or swipe your cursor/finger over cells to paint highlight!'
-                          : 'Press and drag a visual box from one corner to any other diagonally, then release to highlight!'
-                        }
-                      </p>
-                      {multiSelectedTileIds.length > 0 && (
-                        <div className="text-[10px] font-mono text-slate-300 bg-slate-950/60 p-2 rounded-xl border border-slate-850/50 leading-normal flex flex-col gap-0.5 mt-0.5">
-                          <div className="flex justify-between">
-                            <span>Sectors Highlighted:</span>
-                            <span className="text-white font-bold">{multiSelectedTileIds.length} Tiles</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Gift Tiles Cost:</span>
-                            <span className="text-amber-400 font-bold">
-                              {multiSelectedTileIds.length.toFixed(1)} Tiles
-                            </span>
-                          </div>
+              {drawerActiveWindow === 'initial_slots' && (
+                <div className="flex flex-col gap-2.5 animate-fadeIn">
+                  {/* Multi-select toggle (add more slots) */}
+                  <div>
+                    {isMultiSelectMode ? (
+                      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex flex-col gap-2 shadow-inner">
+                        <div className="flex justify-between items-center text-[10px] font-mono text-amber-400 font-bold">
+                          <span className="flex items-center gap-1">
+                            🛠️ Selection Tool
+                          </span>
+                          <span className="bg-amber-500 text-slate-950 font-extrabold px-1.5 py-0.5 rounded-full text-[9px]">
+                            {multiSelectedTileIds.length} Selected
+                          </span>
                         </div>
-                      )}
-                      
-                      {/* Interactive Selection Action buttons place below brush selector enabled element */}
-                      <div className="flex gap-1.5 mt-1">
-                        <button
-                          onClick={() => setMultiSelectedTileIds([])}
-                          className="w-1/3 py-2 bg-slate-950 hover:bg-slate-900 text-slate-400 hover:text-white font-mono font-bold rounded-xl text-[9px] uppercase tracking-wider cursor-pointer border border-slate-800"
-                          title="Clear Highlights"
-                        >
-                          Clear Selection
-                        </button>
+
+                        {/* Clean segment controller tool switcher */}
+                        <div className="grid grid-cols-2 bg-slate-950 p-1 rounded-xl border border-slate-800 gap-1 my-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setMultiSelectTool('brush')}
+                            className={`py-1.5 px-2 rounded-lg text-[9px] font-mono font-bold uppercase transition-all tracking-wide flex items-center justify-center gap-1 cursor-pointer ${
+                              multiSelectTool === 'brush'
+                                ? 'bg-amber-500 text-slate-950 font-black'
+                                : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
+                            }`}
+                          >
+                            <span>🖌️ Brush Paint</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMultiSelectTool('box')}
+                            className={`py-1.5 px-2 rounded-lg text-[9px] font-mono font-bold uppercase transition-all tracking-wide flex items-center justify-center gap-1 cursor-pointer ${
+                              multiSelectTool === 'box'
+                                ? 'bg-amber-500 text-slate-950 font-black'
+                                : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
+                            }`}
+                          >
+                            <span>📐 Corner Box</span>
+                          </button>
+                        </div>
+
+                        <p className="text-[9px] text-slate-400 font-mono leading-relaxed my-0.5">
+                          {multiSelectTool === 'brush'
+                            ? 'Tap grids individually or swipe your cursor/finger over cells to paint highlight!'
+                            : 'Press and drag a visual box from one corner to any other diagonally, then release to highlight!'
+                          }
+                        </p>
+                        {multiSelectedTileIds.length > 0 && (
+                          <div className="text-[10px] font-mono text-slate-300 bg-slate-950/60 p-2 rounded-xl border border-slate-850/50 leading-normal flex flex-col gap-0.5 mt-0.5">
+                            <div className="flex justify-between">
+                              <span>Sectors Highlighted:</span>
+                              <span className="text-white font-bold">{multiSelectedTileIds.length} Tiles</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Gift Tiles Cost:</span>
+                              <span className="text-amber-400 font-bold">
+                                {multiSelectedTileIds.length.toFixed(1)} Tiles
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Interactive Selection Action buttons place below brush selector enabled element */}
+                        <div className="flex gap-1.5 mt-1">
+                          <button
+                            type="button"
+                            onClick={() => setMultiSelectedTileIds([])}
+                            className="w-1/3 py-2 bg-slate-950 hover:bg-slate-900 text-slate-400 hover:text-white font-mono font-bold rounded-xl text-[9px] uppercase tracking-wider cursor-pointer border border-slate-800"
+                            title="Clear Highlights"
+                          >
+                            Clear Selection
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={multiSelectedTileIds.length < 2}
+                            onClick={handleMergeAction}
+                            className={`w-2/3 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-1 ${
+                              multiSelectedTileIds.length >= 2
+                                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-extrabold shadow-md hover:scale-[1.01]'
+                                : 'bg-slate-950 text-slate-600 border border-slate-850/40 cursor-not-allowed'
+                            }`}
+                            title="Merge highlighted grids into a single fansite region"
+                          >
+                            🧩 Merge Region ({multiSelectedTileIds.length})
+                          </button>
+                        </div>
 
                         <button
-                          disabled={multiSelectedTileIds.length < 2}
-                          onClick={handleMergeAction}
-                          className={`w-2/3 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-1 ${
-                            multiSelectedTileIds.length >= 2
-                              ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-extrabold shadow-md hover:scale-[1.01]'
-                              : 'bg-slate-950 text-slate-600 border border-slate-850/40 cursor-not-allowed'
-                          }`}
-                          title="Merge highlighted grids into a single fansite region"
+                          type="button"
+                          onClick={() => {
+                            setIsMultiSelectMode(false);
+                            setMultiSelectedTileIds([]);
+                            if (isMobile) {
+                              setMobileSheetState('expanded');
+                            }
+                          }}
+                          className="py-1 px-2.5 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 font-bold rounded-lg text-[9px] uppercase font-mono transition-all cursor-pointer text-center w-full mt-0.5"
                         >
-                          🧩 Merge Region ({multiSelectedTileIds.length})
+                          Cancel Multi-Select
                         </button>
                       </div>
-
+                    ) : (
                       <button
+                        type="button"
                         onClick={() => {
-                          setIsMultiSelectMode(false);
-                          setMultiSelectedTileIds([]);
+                          setIsMultiSelectMode(true);
+                          setMultiSelectedTileIds([selectedTileId!]);
+                          setMultiSelectTargetTeam(tempTeam !== 'None' ? tempTeam : 'None');
                           if (isMobile) {
-                            setMobileSheetState('expanded');
+                            setMobileSheetState('collapsed');
                           }
+                          setToast({
+                            message: "Multi-Select Mode Active! 🖌️",
+                            description: "Tap other tiles on the map to add them to your selection.",
+                            type: "success"
+                          });
                         }}
-                        className="py-1 px-2.5 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 font-bold rounded-lg text-[9px] uppercase font-mono transition-all cursor-pointer text-center w-full mt-0.5"
+                        className="w-full py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-extrabold rounded-xl text-[10px] uppercase font-mono tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-lg cursor-pointer"
+                        title="Add more slots starting with this sector"
                       >
-                        Cancel Multi-Select
+                        <span>🧩 Add More Slots</span>
                       </button>
-                    </div>
-                  ) : (
+                    )}
+                  </div>
+
+                  {/* Step 1 Next Button */}
+                  <div className="flex justify-end mt-2 pt-2 border-t border-slate-900/60">
                     <button
+                      id="btn-drawer-next-step-1"
+                      type="button"
                       onClick={() => {
-                        setIsMultiSelectMode(true);
-                        setMultiSelectedTileIds([selectedTileId!]);
-                        setMultiSelectTargetTeam(tempTeam !== 'None' ? tempTeam : 'None');
-                        if (isMobile) {
-                          setMobileSheetState('collapsed');
-                        }
-                        setToast({
-                          message: "Multi-Select Mode Active! 🖌️",
-                          description: "Tap other tiles on the map to add them to your selection.",
-                          type: "success"
-                        });
+                        setDrawerActiveWindow('team_select');
                       }}
-                      className="w-full py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-extrabold rounded-xl text-[10px] uppercase font-mono tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-lg cursor-pointer"
-                      title="Add more slots starting with this sector"
+                      className="py-2.5 px-6 bg-gradient-to-tr from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-bold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer transition-all shadow-md active:scale-95"
                     >
-                      <span>🧩 Add More Slots</span>
+                      Next ➔
                     </button>
-                  )}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Country Selection Grids, Hyperlink and Photo Area with Ownership Check */}
               {(() => {
@@ -6133,7 +6174,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                 }
                 return (
                   <>
-                    {drawerActiveWindow === 'team_select' ? (
+                    {drawerActiveWindow === 'team_select' && (
                       <>
                         {/* Country Selection with Search Bar above Horizontal Scrolling Section */}
                         <div className="flex flex-col gap-2 my-2 bg-slate-900/10 border border-slate-850 p-3 rounded-2xl">
@@ -6156,6 +6197,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                             />
                             {teamSearchQuery && (
                               <button
+                                type="button"
                                 onClick={() => setTeamSearchQuery('')}
                                 className="absolute right-3 top-1.8 text-slate-400 hover:text-white bg-slate-850 p-0.5 rounded cursor-pointer transition-colors"
                               >
@@ -6183,6 +6225,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                                 return (
                                   <button
                                     key={team}
+                                    type="button"
                                     onClick={() => {
                                       setTempTeam(team as TeamChoice);
                                       setHasSelectedTeamInSession(true);
@@ -6223,10 +6266,20 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
 
                         </div>
 
-                        {/* Next Button aligned bottom-right */}
-                        <div className="flex justify-end mt-4 border-t border-slate-900 pt-3">
+                        {/* Back & Next Navigation buttons Row */}
+                        <div className="flex justify-between mt-4 border-t border-slate-900 pt-3 gap-3">
+                          <button
+                            id="btn-drawer-back-step-2"
+                            type="button"
+                            onClick={() => setDrawerActiveWindow('initial_slots')}
+                            className="py-2.5 px-5 bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-350 hover:text-white rounded-xl text-xs font-mono font-bold cursor-pointer transition-colors"
+                          >
+                            ← Back
+                          </button>
+
                           <button
                             id="btn-drawer-next-step"
+                            type="button"
                             onClick={() => {
                               if (tempTeam === 'None') {
                                 setToast({
@@ -6244,19 +6297,22 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                           </button>
                         </div>
                       </>
-                    ) : (
+                    )}
+
+                    {drawerActiveWindow === 'addons_and_payment' && (
                       <div className="flex flex-col gap-3.5 animate-fadeIn">
                         {/* Title page header row with Back button */}
                         <div className="flex items-center justify-between bg-slate-900/10 p-2 rounded-xl border border-slate-900">
                           <button
                             id="btn-drawer-prev-step"
+                            type="button"
                             onClick={() => setDrawerActiveWindow('team_select')}
                             className="py-1 px-3 bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-xl text-[10px] font-mono font-bold cursor-pointer transition-colors"
                           >
                             ← Back
                           </button>
                           <span className="text-[10px] text-amber-500 font-mono uppercase tracking-wider font-extrabold">
-                            Add-ons & Checkout 🛠️
+                            Add-ons 🛠️
                           </span>
                         </div>
 
@@ -6269,8 +6325,8 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                               placeholder="e.g. keralasoccer.com"
                               value={hyperlinkInput}
                               onChange={e => {
-                                setHyperlinkInput(e.target.value);
-                                saveDesignSettings({ hyperlink: e.target.value });
+                                  setHyperlinkInput(e.target.value);
+                                  saveDesignSettings({ hyperlink: e.target.value });
                               }}
                               className="w-full bg-slate-950 border border-slate-850 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/80 font-mono"
                             />
@@ -6312,6 +6368,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                                       <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
                                     </label>
                                     <button
+                                      type="button"
                                       onClick={() => {
                                         saveDesignSettings({ photo: '' });
                                         setToast({
@@ -6346,6 +6403,39 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                               <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
                             </label>
                           )}
+                        </div>
+
+                        {/* Next Button only to trigger Checkout window */}
+                        <div className="flex justify-end mt-4 border-t border-slate-900 pt-3">
+                          <button
+                            id="btn-drawer-next-to-checkout"
+                            type="button"
+                            onClick={() => {
+                              setDrawerActiveWindow('checkout');
+                            }}
+                            className="py-2.5 px-6 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-extrabold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer transition-all uppercase tracking-wider shadow-md hover:scale-[1.02] active:scale-[0.98]"
+                          >
+                            Next ➔
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {drawerActiveWindow === 'checkout' && (
+                      <div className="flex flex-col gap-3.5 animate-fadeIn">
+                        {/* Title page header row with Back button */}
+                        <div className="flex items-center justify-between bg-slate-900/10 p-2 rounded-xl border border-slate-900">
+                          <button
+                            id="btn-drawer-prev-to-addons"
+                            type="button"
+                            onClick={() => setDrawerActiveWindow('addons_and_payment')}
+                            className="py-1 px-3 bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-xl text-[10px] font-mono font-bold cursor-pointer transition-colors"
+                          >
+                            ← Back
+                          </button>
+                          <span className="text-[10px] text-amber-500 font-mono uppercase tracking-wider font-extrabold">
+                            Checkout 💳
+                          </span>
                         </div>
 
                         {/* Interactive Inline Payment Checkout options details */}
@@ -6407,6 +6497,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                               <div className="flex flex-col gap-1.5 mt-1 font-mono">
                                 <button
                                   id="btn-drawer-confirm-pay-inline"
+                                  type="button"
                                   onClick={() => {
                                     setPendingTeam(tempTeam);
                                     setIsMultiSelectCheckout(isMulti);
@@ -6419,9 +6510,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                                 </button>
                               </div>
 
-                              <p className="text-[8px] text-slate-500 font-mono text-center">
-                                Claim using free Gift Tiles or secure via simulated checkout!
-                              </p>
+
                             </div>
                           );
                         })()}
