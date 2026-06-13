@@ -1,0 +1,74 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Custom Scrollbar for Chat box */
+::-webkit-scrollbar {
+  width: 5px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* Dark theme overrides for Leaflet popups */
+.leaflet-container {
+  background-color: #0b0f19 !important;
+  outline: none;
+}
+
+.leaflet-popup-content-wrapper {
+  background: #0f172a !important; /* Tailwind slate-900 */
+  color: #f8fafc !important; /* Tailwind slate-50 */
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5) !important;
+  padding: 0 !important;
+}
+
+.leaflet-popup-content {
+  margin: 12px 14px !important;
+  line-height: 1.4 !important;
+}
+
+.leaflet-popup-tip {
+  background: #0f172a !important;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Simple animation pulses */
+@keyframes map-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+
+.animate-pulse-slow {
+  animation: map-pulse 3s infinite ease-in-out;
+}
+
+/* Active glow effects for button interactions */
+.btn-active-glow {
+  box-shadow: 0 0 18px 3px rgba(0, 242, 254, 0.8), inset 0 0 8px 1px rgba(0, 242, 254, 0.5) !important;
+  border-color: #00f2fe !important;
+  color: #00f2fe !important;
+  text-shadow: 0 0 8px rgba(0, 242, 254, 0.6) !important;
+  transition: all 0.1s ease-out !important;
+}
+
+/* Permit drag-box action to pass downstream to the leaflet map itself */
+.multi-select-box-tool-active .leaflet-interactive {
+  pointer-events: none !important;
+}
+
+
