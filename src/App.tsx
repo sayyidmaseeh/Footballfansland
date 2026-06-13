@@ -57,6 +57,10 @@ import {
   dbSetUserBanned,
   dbDeleteUser,
   isSupabaseConfigured,
+  isSupabaseOverridden,
+  supabaseUrl,
+  supabaseAnonKey,
+  setSupabaseOverrides,
   dbAddActivityLog,
   dbFetchActivityLogs,
   dbSignUp,
@@ -1066,6 +1070,9 @@ export default function App() {
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [showDbConfig, setShowDbConfig] = useState(false);
+  const [customDbUrl, setCustomDbUrl] = useState(supabaseUrl);
+  const [customDbKey, setCustomDbKey] = useState(supabaseAnonKey);
 
   // Guided Tour state synchronization effect
   useEffect(() => {
@@ -1182,12 +1189,13 @@ export default function App() {
   // Sophisticated glowing and pulse animations on button touch/click
   useEffect(() => {
     const handleStart = (e: MouseEvent | TouchEvent) => {
+      if (!e.target || typeof (e.target as any).closest !== 'function') return;
       const target = (e.target as HTMLElement).closest('.btn-interactive');
       if (!target) return;
-
+ 
       // Add the active glow class
       target.classList.add('btn-active-glow');
-
+ 
       // Modern Web Animations API pulse animation
       try {
         target.animate([
@@ -1203,8 +1211,9 @@ export default function App() {
         console.warn("Web Animations API failed or not supported in environment:", err);
       }
     };
-
+ 
     const handleEnd = (e: Event) => {
+      if (!e.target || typeof (e.target as any).closest !== 'function') return;
       const target = (e.target as HTMLElement).closest('.btn-interactive');
       if (!target) return;
       target.classList.remove('btn-active-glow');
@@ -3458,8 +3467,8 @@ A: In Multiselect Mode, use the 'Brush' tool to sweep across adjacent tiles to p
 Q: How much does it cost to claim a map tile sector?
 A: Each map tile sector can be claimed and locked for exactly 10 Rupees.
 
-Q: How do I get support for coordinating or syncing tiles?
-A: For assistance with territory recovery or grid alignment, check our Support Center in the footer or submit an inquiry to our 24/7 dedicated Contact Desk.`;
+Q: How do I add environment variables and secrets in Cloudflare?
+A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variables, and click 'Add variable' to insert keys like VITE_SUPABASE_URL. Make sure to choose 'Encrypt' for sensitive secrets, then save and redeploy.`;
     } else if (type === 'contact') {
       title = `📨 Contact & Operations Desk`;
       content = `Have a question about your claimed sectors, spatial grid sync, simulated payments, or local football turf coordinates? Get in touch with our operations desk:
@@ -7504,7 +7513,9 @@ A: For assistance with territory recovery or grid alignment, check our Support C
                     <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl py-2 px-3 text-[10px] font-mono text-emerald-300 flex items-center gap-2 shadow-inner">
                       <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
                       <div className="leading-tight flex-1">
-                        <span className="font-extrabold block uppercase tracking-wide">Cloud Database Core Active</span>
+                        <span className="font-extrabold block uppercase tracking-wide">
+                          Cloud Database Core Active{isSupabaseOverridden ? ' (Manual Override)' : ''}
+                        </span>
                         <span className="text-emerald-400/80">Syncing authentication logs & claims with Supabase</span>
                       </div>
                     </div>
@@ -7641,6 +7652,90 @@ A: For assistance with territory recovery or grid alignment, check our Support C
                     </div>
                   </div>
                 )}
+
+                {/* Advanced Database Keys Setup Panel (Supabase & Cloudflare Helper) */}
+                <div className="bg-slate-950/60 p-3 rounded-2xl border border-slate-850/80 relative z-10 flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDbConfig(!showDbConfig)}
+                    className="flex items-center justify-between text-slate-400 hover:text-white transition-colors py-0.5 px-1 cursor-pointer font-mono text-[9px] uppercase tracking-wider font-extrabold w-full text-left"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      ⚙️ {isSupabaseConfigured ? 'View API URL & Keys' : 'Connect Live Supabase Database'}
+                    </span>
+                    <span>{showDbConfig ? 'Close ✕' : 'Expand 🔧'}</span>
+                  </button>
+
+                  {showDbConfig && (
+                    <div className="pt-2 border-t border-slate-850/50 flex flex-col gap-3">
+                      <p className="text-[10px] text-slate-400 leading-normal">
+                        Vite compiles environment variables statically at build time. To apply variables like <code className="bg-slate-900 px-1 py-0.5 rounded text-white text-[9px]">VITE_SUPABASE_URL</code> in your deployed environment, save the secrets on Cloudflare and rebuild. Alternatively, provide them below to test connections instantly in this browser session.
+                      </p>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[9px] font-mono font-bold uppercase tracking-wide text-slate-400">
+                          Supabase Project URL
+                        </label>
+                        <input
+                          type="text"
+                          value={customDbUrl}
+                          onChange={(e) => setCustomDbUrl(e.target.value)}
+                          placeholder="https://your-project.supabase.co"
+                          className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500/50 rounded-xl px-2.5 py-1.5 text-[11px] font-mono text-white placeholder-slate-600 outline-none transition-all"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[9px] font-mono font-bold uppercase tracking-wide text-slate-400">
+                          Supabase Anon / Public API Key
+                        </label>
+                        <input
+                          type="password"
+                          value={customDbKey}
+                          onChange={(e) => setCustomDbKey(e.target.value)}
+                          placeholder="eyJhbGciOiJIUzI1NiIsIn..."
+                          className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500/50 rounded-xl px-2.5 py-1.5 text-[11px] font-mono text-white placeholder-slate-600 outline-none transition-all"
+                        />
+                      </div>
+
+                      <div className="flex gap-2.5 pt-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSupabaseOverrides(customDbUrl, customDbKey);
+                            setToast({
+                              message: "Credentials saved! 🌟",
+                              description: "The page will restart to establish a secure database handshake.",
+                              type: "success"
+                            });
+                          }}
+                          className="flex-1 py-2 bg-gradient-to-r from-teal-500/20 to-emerald-500/20 hover:from-teal-500/30 hover:to-emerald-500/30 text-emerald-300 hover:text-white border border-emerald-500/30 hover:border-emerald-500/60 rounded-xl text-[10px] font-bold font-mono uppercase tracking-wide cursor-pointer transition-all text-center select-none"
+                        >
+                          Save & Restart ⚡
+                        </button>
+                        
+                        {(isSupabaseOverridden || customDbUrl || customDbKey) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomDbUrl('');
+                              setCustomDbKey('');
+                              setSupabaseOverrides('', '');
+                              setToast({
+                                message: "Credentials cleared! 🧹",
+                                description: "The page will restart to default offline sandbox configuration.",
+                                type: "info"
+                              });
+                            }}
+                            className="px-3 py-2 bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-350 hover:text-white rounded-xl text-[10px] font-bold font-mono uppercase tracking-wide cursor-pointer transition-all text-center select-none"
+                          >
+                            Reset 🧹
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Styled Tabbed Switcher Row */}

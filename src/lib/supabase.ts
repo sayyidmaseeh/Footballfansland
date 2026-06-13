@@ -1,6 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 import { TileData } from '../types';
 
+declare global {
+  interface ImportMeta {
+    readonly env: {
+      readonly [key: string]: string | undefined;
+    };
+  }
+}
+
 /* ==========================================================================
    SUPABASE SQL SCHEMA FOR YOUR DATABASE (Copy-paste into Supabase SQL Editor)
    ==========================================================================
@@ -49,14 +57,49 @@ import { TileData } from '../types';
    );
 */
 
-const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
+// 1. Literal environment checks (mandatory for Vite compile-time replacement)
+const staticUrl = import.meta.env?.VITE_SUPABASE_URL || '';
+const staticKey = import.meta.env?.VITE_SUPABASE_ANON_KEY || '';
+
+// 2. Direct lookup for secondary flexibility
+const dynamicUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
+const dynamicKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
+
+// 3. Dynamic client-side local overrides
+let localUrl = '';
+let localKey = '';
+try {
+  localUrl = localStorage.getItem('VITE_SUPABASE_URL_OVERRIDE') || '';
+  localKey = localStorage.getItem('VITE_SUPABASE_ANON_KEY_OVERRIDE') || '';
+} catch (e) {}
+
+export const supabaseUrl = localUrl || staticUrl || dynamicUrl || '';
+export const supabaseAnonKey = localKey || staticKey || dynamicKey || '';
 
 export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey);
+export const isSupabaseOverridden = !!(localUrl && localKey);
 
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey)
   : null;
+
+/**
+ * Configure or delete manual Supabase connectivity overrides on the dev/deployed environment
+ */
+export function setSupabaseOverrides(url: string, key: string) {
+  try {
+    if (url.trim() && key.trim()) {
+      localStorage.setItem('VITE_SUPABASE_URL_OVERRIDE', url.trim());
+      localStorage.setItem('VITE_SUPABASE_ANON_KEY_OVERRIDE', key.trim());
+    } else {
+      localStorage.removeItem('VITE_SUPABASE_URL_OVERRIDE');
+      localStorage.removeItem('VITE_SUPABASE_ANON_KEY_OVERRIDE');
+    }
+    window.location.reload();
+  } catch (e) {
+    console.error("Failed to commit database connection overrides:", e);
+  }
+}
 
 const tableStatusCache: Record<string, 'exists' | 'missing' | 'unverified'> = {};
 const bucketStatusCache: Record<string, 'exists' | 'missing' | 'unverified'> = {};
