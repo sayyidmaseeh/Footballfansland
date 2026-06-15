@@ -43,7 +43,9 @@ import {
   Mail,
   ExternalLink,
   Eye,
-  EyeOff
+  EyeOff,
+  Bell,
+  Calendar
 } from 'lucide-react';
 import { TileData, TeamChoice, TeamStyle, ChatMessage, UserReferralData } from './types';
 
@@ -72,6 +74,37 @@ import {
   resetMissingTableCache,
   dbVerifySchemasOnBoot
 } from './lib/supabase';
+
+// Global static football fixtures
+export const FOOTBALL_FIXTURES = [
+  {
+    id: 'match1',
+    title: '🏆 Kozhikode Riverbank Superclásico',
+    teamH: 'Argentina Fan Alliance',
+    teamA: 'Brazil Samba FC',
+    emojiH: '🇦🇷',
+    emojiA: '🇧🇷',
+    time: 'Tonight, 8:00 PM'
+  },
+  {
+    id: 'match2',
+    title: '⚓ Malabar Beach Sevens Derby',
+    teamH: 'Portugal Fan Block',
+    teamA: 'France Blues Block',
+    emojiH: '🇵🇹',
+    emojiA: '🇫🇷',
+    time: 'Tomorrow, 9:30 PM'
+  },
+  {
+    id: 'match3',
+    title: '⚡ Malappuram Sevens Final KO',
+    teamH: 'Malappuram Giants FC',
+    teamA: 'Gokulam Beach Rovers',
+    emojiH: '🟢',
+    emojiA: '🟡',
+    time: 'Sunday, 7:00 PM'
+  }
+];
 
 // Supported countries with high-contrast theme variations
 const TEAM_STYLES: Record<string, TeamStyle> = {
@@ -753,7 +786,7 @@ export default function App() {
   const [freeSlots, setFreeSlots] = useState<number>(() => {
     try {
       const stored = localStorage.getItem('kerala_claimed_free_slots_count');
-      return stored ? parseInt(stored, 10) : 0;
+      return stored ? parseFloat(stored) : 0;
     } catch {
       return 0;
     }
@@ -783,16 +816,10 @@ export default function App() {
     setReferralData(prev => {
       const nextCount = prev.referredCount + 1;
       let nextFractional = parseFloat((prev.pendingFractionalTiles + 0.1).toFixed(2));
-      let slotRewardCount = 0;
+      let slotRewardCount = 0.1; // Direct real-time fractional reward of +0.1 slots on every registration!
       let milestoneMsg = "";
       
-      // Base fractional progress: every 1.0 (10 referrals) adds 1 full tile slot
-      if (nextFractional >= 1.0) {
-        slotRewardCount += 1;
-        nextFractional = parseFloat((nextFractional - 1.0).toFixed(2));
-      }
-      
-      // Detailed user-specified milestone tiers
+      // Detailed user-specified milestone tiers as bonus additions
       if (nextCount === 10) {
         slotRewardCount += 3; // 10 invites -> 3 tiles
         milestoneMsg = "🎉 Milestone achieved: 10 invites! You received +3 Free Claim Slots!";
@@ -805,34 +832,34 @@ export default function App() {
       } else if (nextCount === 40) {
         slotRewardCount += 9; // 40 invites -> 9 tiles
         milestoneMsg = "🎉 Super Milestone achieved: 40 invites! You received +9 Free Claim Slots!";
-      } else if (nextCount === 50) {
+      } else if (nextCount === 55 || nextCount === 50) {
         slotRewardCount += 15; // 50 invites -> 15 slots
         milestoneMsg = "🔥 Ultimate Milestone achieved: 50 invites! You received +15 Ultimate Claim Slots!";
       }
       
       const updated = {
         referredCount: nextCount,
-        pendingFractionalTiles: nextFractional
+        pendingFractionalTiles: parseFloat((nextFractional >= 1.0 ? nextFractional - 1.0 : nextFractional).toFixed(2))
       };
       
       localStorage.setItem('kerala_football_map_referrals_v1', JSON.stringify(updated));
       
-      if (slotRewardCount > 0) {
-        setFreeSlots(curr => {
-          const updatedSlots = curr + slotRewardCount;
-          localStorage.setItem('kerala_claimed_free_slots_count', updatedSlots.toString());
-          return updatedSlots;
-        });
-        
+      setFreeSlots(curr => {
+        const updatedSlots = parseFloat((curr + slotRewardCount).toFixed(2));
+        localStorage.setItem('kerala_claimed_free_slots_count', updatedSlots.toString());
+        return updatedSlots;
+      });
+      
+      if (slotRewardCount > 0.1) {
         setToast({
-          message: "🏆 milestone Award Cleared! 🏆",
-          description: milestoneMsg || `Incredible! You earned +${slotRewardCount} Free Claim Slots from invite bonuses!`,
+          message: "🏆 Milestone Award Cleared! 🏆",
+          description: milestoneMsg || `Incredible! You earned +${parseFloat(slotRewardCount.toFixed(2))} Free Claim Slots from invite bonuses!`,
           type: "success"
         });
       } else {
         setToast({
           message: "Referral Accredited! ⚽",
-          description: `Friend successfully registered. Progress of +0.1 added to tile balance towards the next slot!`,
+          description: `Friend successfully registered. Real-time +0.1 Claim Slot added to your balance!`,
           type: "success"
         });
       }
@@ -1136,6 +1163,8 @@ export default function App() {
 
   const [showPredictionModal, setShowPredictionModal] = useState(false);
   const [earnSlotsTab, setEarnSlotsTab] = useState<'predictions' | 'referrals'>('predictions');
+  const [showNotificationDrawer, setShowNotificationDrawer] = useState(false);
+  const [showLoginReminderToast, setShowLoginReminderToast] = useState(false);
   const [isVerifyingPrediction, setIsVerifyingPrediction] = useState<string | null>(null);
   const [predictions, setPredictions] = useState<Record<string, { choice: string; status: 'simulating' | 'won' | 'lost' | 'claimed' }>>(() => {
     try {
@@ -1164,6 +1193,11 @@ export default function App() {
   const [imageBorderStyle, setImageBorderStyle] = useState<'none' | 'team_color'>('none');
   const [hyperlinkInput, setHyperlinkInput] = useState('');
   const [teamSearchQuery, setTeamSearchQuery] = useState('');
+  const [loadingPhotoTileIds, setLoadingPhotoTileIds] = useState<string[]>([]);
+  const loadingPhotoTileIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    loadingPhotoTileIdsRef.current = loadingPhotoTileIds;
+  }, [loadingPhotoTileIds]);
 
   // Popup notification toast state
   const [toast, setToast] = useState<{ message: string; description?: string; type: 'success' | 'info' | 'warning' } | null>(null);
@@ -1333,6 +1367,60 @@ export default function App() {
       window.removeEventListener('mouseup', handleGlobalMouseUp);
     };
   }, []);
+
+  // 1.5 REAL-TIME CLOUD SYSTEM SYNCHRONIZER: Periodically polls state updates to achieve live synchronization
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    const liveSyncInterval = setInterval(async () => {
+      try {
+        const [cloudTiles, logsList] = await Promise.all([
+          dbFetchTiles().catch(() => null),
+          dbFetchActivityLogs().catch(() => null)
+        ]);
+
+        if (cloudTiles && Object.keys(cloudTiles).length > 0) {
+          const currentStringified = JSON.stringify(latestTilesRef.current || {});
+          const nextStringified = JSON.stringify(cloudTiles);
+          if (currentStringified !== nextStringified) {
+            setTiles(cloudTiles);
+            latestTilesRef.current = cloudTiles;
+            updateVisibleGrid(cloudTiles);
+          }
+        }
+
+        if (logsList && logsList.length > 0) {
+          setActivityLogs(logsList);
+        }
+      } catch (err) {
+        console.warn("Real-time background sync poll skipped:", err);
+      }
+    }, 4000);
+
+    return () => {
+      clearInterval(liveSyncInterval);
+    };
+  }, []);
+
+  const prevUserRef = useRef<any>(null);
+  const prevShowOnboardingRef = useRef<boolean>(true);
+
+  // 1.6 USER LOGIN REMINDER TRIGGERS: Triggers welcome toast with upcoming fixtures and pending predictions on onboarding dismissal or subsequent logins
+  useEffect(() => {
+    if (loggedInUser) {
+      const userChanged = !prevUserRef.current || prevUserRef.current.email !== loggedInUser.email;
+      const onboardingDismissed = prevShowOnboardingRef.current && !showOnboarding;
+      
+      if (!showOnboarding && (userChanged || onboardingDismissed)) {
+        setShowLoginReminderToast(true);
+      }
+    } else {
+      setShowLoginReminderToast(false);
+    }
+    
+    prevUserRef.current = loggedInUser;
+    prevShowOnboardingRef.current = showOnboarding;
+  }, [loggedInUser, showOnboarding]);
 
   // Map-level drag box is now processed compactly inside the custom container gesture handler below to fully support pinch-to-zoom multi-touch features.
 
@@ -1684,6 +1772,7 @@ export default function App() {
     setMultiSelectedTileIds([]);
 
     triggerTileSelection(masterId, masterUpdate);
+    setDrawerActiveWindow('team_select');
 
     // Dynamic referee confirmation chat log added to feed
     const mergerMsg: ChatMessage = {
@@ -1730,7 +1819,7 @@ export default function App() {
     if (freeSlots < N) {
       setToast({
         message: "Insufficient Slots! ⚠️",
-        description: `You need ${N} slots but only have ${freeSlots} slots left. Buy missing slots below!`,
+        description: `You need ${N} slots but only have ${parseFloat(freeSlots.toFixed(2))} slots left. Buy missing slots below!`,
         type: "warning"
       });
       return;
@@ -2150,8 +2239,9 @@ export default function App() {
       const ownerData = currentTiles[ownerId];
       if (!ownerData) return;
 
-      // Draw only if customized properties are verified
-      if (!ownerData.photo) return;
+      const isPhotoLoading = loadingPhotoTileIdsRef.current.includes(ownerId);
+      // Draw if customized properties are verified OR if photo is currently loading
+      if (!ownerData.photo && !isPhotoLoading) return;
 
       const memberIds = ownerData.mergedWith && ownerData.mergedWith.length > 0 
         ? ownerData.mergedWith 
@@ -2187,7 +2277,7 @@ export default function App() {
       if (ownerData.photo) {
         try {
           const imgOverlay = (window as any).L.imageOverlay(ownerData.photo, bounds, {
-            opacity: 0.85,
+            opacity: isPhotoLoading ? 0.35 : 0.85,
             className: 'merged-region-image',
             interactive: true
           }).addTo(mapInstance);
@@ -2221,6 +2311,43 @@ export default function App() {
           overlayLayersRef.current.push(borderRect);
         } catch (overlayErr) {
           console.error("Failed to render Leaflet imageOverlay for data:", ownerId, overlayErr);
+        }
+      }
+
+      // Render custom loading spinner symbol over/inside the tile during sync/upload
+      if (isPhotoLoading) {
+        try {
+          const boundsCenter = [
+            (minLat + maxLat) / 2,
+            (minLng + maxLng) / 2
+          ];
+
+          const loadingIcon = (window as any).L.divIcon({
+            html: `
+              <div class="relative flex items-center justify-center pointer-events-none select-none">
+                <div class="flex items-center justify-center p-2 rounded-xl bg-slate-950/95 border border-amber-500 shadow-[0_4px_16px_rgba(245,158,11,0.6)] gap-2 animate-pulse min-w-[130px]">
+                  <svg class="animate-spin h-4 w-4 text-amber-500 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span class="text-[9px] font-mono text-amber-400 font-extrabold uppercase tracking-wider whitespace-nowrap">Syncing Photo...</span>
+                </div>
+              </div>
+            `,
+            iconSize: [140, 36],
+            iconAnchor: [70, 18],
+            className: 'leaflet-loading-tile-marker pointer-events-none select-none'
+          });
+
+          const loadingMarker = (window as any).L.marker(boundsCenter, {
+            icon: loadingIcon,
+            interactive: false,
+            pane: 'markerPane'
+          }).addTo(mapInstance);
+
+          overlayLayersRef.current.push(loadingMarker);
+        } catch (loadingErr) {
+          console.error("Failed to render Leaflet loading marker for data:", ownerId, loadingErr);
         }
       }
     });
@@ -2288,7 +2415,7 @@ export default function App() {
         mapRef.current.off('moveend', handleMapMove);
       }
     };
-  }, [tiles, isMultiSelectMode, multiSelectedTileIds, selectedTileId]);
+  }, [tiles, isMultiSelectMode, multiSelectedTileIds, selectedTileId, loadingPhotoTileIds]);
 
   // Instantly synchronize Leaflet polygon colors/styles when selection or claims change
   useEffect(() => {
@@ -4373,12 +4500,41 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
     setMultiSelectedTileIds([]);
   };
 
-  // Claim Tile using earned prediction slots
+  // Claim Tile using earned prediction slots (Earned Tile Balance)
   const executeFreeSlotPayment = () => {
-    if (freeSlots <= 0) return;
-    const nextFreeSlots = freeSlots - 1;
+    const qty = isMultiSelectCheckout ? slotPurchaseCount : 1;
+    const totalBalance = freeSlots + giftTiles;
+    if (totalBalance < qty) {
+      setToast({
+        message: "Insufficient Earned Tile Balance! ⚠️",
+        description: `You need ${qty} Earned Tiles but only have ${parseFloat(totalBalance.toFixed(2))} left. Play prediction or invite friends to earn more!`,
+        type: "warning"
+      });
+      return;
+    }
+
+    if (isMultiSelectCheckout && pendingTeam !== 'None') {
+      executeBatchFreeSlotPayment(pendingTeam);
+      setShowPaymentModal(false);
+      setSelectedTileId(null);
+      setIsMultiSelectMode(false);
+      setMultiSelectedTileIds([]);
+      return;
+    }
+
+    let nextFreeSlots = freeSlots;
+    let nextGiftTiles = giftTiles;
+    if (freeSlots >= 1) {
+      nextFreeSlots = parseFloat((freeSlots - 1).toFixed(2));
+    } else {
+      const needed = 1 - freeSlots;
+      nextFreeSlots = 0;
+      nextGiftTiles = parseFloat((giftTiles - needed).toFixed(2));
+    }
     setFreeSlots(nextFreeSlots);
     localStorage.setItem('kerala_claimed_free_slots_count', nextFreeSlots.toString());
+    setGiftTiles(nextGiftTiles);
+    localStorage.setItem('kerala_gift_tiles_balance', nextGiftTiles.toString());
 
     const activeData = tiles[selectedTileId!] || {
       id: selectedTileId!,
@@ -4391,7 +4547,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
     const botMessage: ChatMessage = {
       id: `sys-${Date.now()}`,
       user: 'System Referee 📣',
-      text: `Claimed tile for ${TEAM_STYLES[pendingTeam]?.flagEmoji || '🏳️'} ${pendingTeam} for FREE using a Daily Prediction Slot! 🔥 VALE! (Owner: @${ownerName})`,
+      text: `Claimed tile for ${TEAM_STYLES[pendingTeam]?.flagEmoji || '🏳️'} ${pendingTeam} using Earned Tile Balance! ⚽ (Owner: @${ownerName})`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
@@ -4408,11 +4564,14 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
     setTempTeam(pendingTeam);
 
     setToast({
-      message: "Slot Redeemed! 🎉",
-      description: `Sector ${selectedTileId} claimed using 1 Slot! It now belongs to you. You have ${nextFreeSlots} slots left.`,
+      message: "Territory Secured! 🎉",
+      description: `Sector ${selectedTileId} claimed using 1 Earned Tile! Remaining balance: ${parseFloat((nextFreeSlots + nextGiftTiles).toFixed(2))} Tiles.`,
       type: "success"
     });
     setShowPaymentModal(false);
+    setSelectedTileId(null);
+    setIsMultiSelectMode(false);
+    setMultiSelectedTileIds([]);
   };
 
   // Claim multi-selected tiles using earned prediction slots
@@ -4424,18 +4583,30 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
         ? activeData.mergedWith
         : (selectedTileId ? [selectedTileId] : []);
     const N = targetTileIds.length;
-    if (freeSlots < N) {
+    
+    const totalBalance = freeSlots + giftTiles;
+    if (totalBalance < N) {
       setToast({
-        message: "Insufficient Slots! ⚠️",
-        description: `You need ${N} slots but only have ${freeSlots} slots left. Play trivia or prediction to earn more!`,
+        message: "Insufficient Balance! ⚠️",
+        description: `You need ${N} Earned Tiles but only have ${parseFloat(totalBalance.toFixed(2))} slots left. Play trivia or prediction to earn more!`,
         type: "warning"
       });
       return;
     }
 
-    const nextFreeSlots = freeSlots - N;
+    let nextFreeSlots = freeSlots;
+    let nextGiftTiles = giftTiles;
+    if (freeSlots >= N) {
+      nextFreeSlots = parseFloat((freeSlots - N).toFixed(2));
+    } else {
+      const needed = N - freeSlots;
+      nextFreeSlots = 0;
+      nextGiftTiles = parseFloat((giftTiles - needed).toFixed(2));
+    }
     setFreeSlots(nextFreeSlots);
     localStorage.setItem('kerala_claimed_free_slots_count', nextFreeSlots.toString());
+    setGiftTiles(nextGiftTiles);
+    localStorage.setItem('kerala_gift_tiles_balance', nextGiftTiles.toString());
 
     const ownerName = loggedInUser ? loggedInUser.username : 'Guest';
 
@@ -4477,7 +4648,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
 
     setToast({
       message: `${N} Sectors Secured! 🎉`,
-      description: `Successfully claimed all ${N} selected sectors for ${targetTeam}! Used ${N} slot tokens.`,
+      description: `Successfully claimed all ${N} selected sectors for ${targetTeam}! Used ${N} slot tokens. Remaining balance: ${parseFloat((nextFreeSlots + nextGiftTiles).toFixed(2))} Tiles.`,
       type: "success"
     });
 
@@ -5187,12 +5358,29 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
     // Clear input value so selecting the same photo again triggers onChange event
     const targetInput = e.target;
     
-    const activeData = tiles[selectedTileId!] || {
-      id: selectedTileId!,
-      team: 'None',
-      photo: '',
-      chats: []
+    const targetTileIds = (isMultiSelectMode && multiSelectedTileIds.length > 0)
+      ? multiSelectedTileIds
+      : [selectedTileId!];
+
+    // Helper to update all targeted tiles with the uploaded photo
+    const updateAllTargetsWithPhoto = (photoUrl: string) => {
+      targetTileIds.forEach(id => {
+        const currentData = tiles[id] || {
+          id: id,
+          team: 'None',
+          photo: '',
+          chats: []
+        };
+        updateTileInState(id, {
+          ...currentData,
+          photo: photoUrl
+        });
+      });
+      setLoadingPhotoTileIds(prev => prev.filter(id => !targetTileIds.includes(id)));
     };
+
+    // Add to loading state immediately to trigger the map spin load marker
+    setLoadingPhotoTileIds(prev => [...prev, ...targetTileIds]);
 
     // Try uploading to Supabase Storage if configured
     if (isSupabaseConfigured) {
@@ -5202,20 +5390,25 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
         type: "info"
       });
 
-      const publicUrl = await dbUploadImage(file);
-      if (publicUrl) {
-        updateTileInState(selectedTileId!, {
-          ...activeData,
-          photo: publicUrl
-        });
+      try {
+        const publicUrl = await dbUploadImage(file);
+        if (publicUrl) {
+          // Add a satisfying simulated delay of 1.5 seconds for visual feedback
+          setTimeout(() => {
+            updateAllTargetsWithPhoto(publicUrl);
 
-        setToast({
-          message: "Uploaded to Cloud! 📸☁️",
-          description: "Your map sector image overlay was saved securely to Supabase Storage.",
-          type: "success"
-        });
-        targetInput.value = '';
-        return;
+            setToast({
+              message: "Uploaded to Cloud! 📸☁️",
+              description: `Your map sector image overlay was saved securely to Supabase Storage for ${targetTileIds.length} sector(s).`,
+              type: "success"
+            });
+          }, 1500);
+          
+          targetInput.value = '';
+          return;
+        }
+      } catch (err) {
+        console.error("Supabase direct upload failed:", err);
       }
       
       console.log("[Supabase Sandbox]: Storage upload unconfigured or missing bucket, falling back to local base64 compression.");
@@ -5229,15 +5422,16 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
         const reader = new FileReader();
         reader.onload = (event) => {
           if (event.target?.result) {
-            updateTileInState(selectedTileId!, {
-              ...activeData,
-              photo: event.target.result as string
-            });
-            setToast({
-              message: "Image Uploaded! 📸",
-              description: `Loaded originally small image (${originalSizeKB} KB) under the 100 KB threshold.`,
-              type: "success"
-            });
+            const resultUrl = event.target.result as string;
+            // Add a satisfying simulated delay of 1.5 seconds for visual feedback
+            setTimeout(() => {
+              updateAllTargetsWithPhoto(resultUrl);
+              setToast({
+                message: "Image Uploaded! 📸",
+                description: `Loaded originally small image (${originalSizeKB} KB) to ${targetTileIds.length} sector(s) under the 100 KB threshold.`,
+                type: "success"
+              });
+            }, 1500);
           }
         };
         reader.readAsDataURL(file);
@@ -5329,34 +5523,35 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
       // Calculate compressed estimated size in KB
       const compressedSizeKB = ((compressedBase64.length * 3) / (4 * 1024)).toFixed(1);
 
-      updateTileInState(selectedTileId!, {
-        ...activeData,
-        photo: compressedBase64
-      });
+      // Add a satisfying simulated delay of 1.5 seconds for visual feedback
+      setTimeout(() => {
+        updateAllTargetsWithPhoto(compressedBase64);
 
-      setToast({
-        message: "Image Compressed! 📸✨",
-        description: `Successfully optimized size: ${originalSizeKB} KB ➔ ${compressedSizeKB} KB (Limit < 100 KB).`,
-        type: "success"
-      });
+        setToast({
+          message: "Image Compressed! 📸✨",
+          description: `Successfully optimized size: ${originalSizeKB} KB ➔ ${compressedSizeKB} KB (Limit < 100 KB) for ${targetTileIds.length} sector(s).`,
+          type: "success"
+        });
+      }, 1500);
+
     } catch (error) {
       console.error("Compression error:", error);
       // Fallback: load normal file in case of canvas failure
       const reader = new FileReader();
       reader.onload = (event) => {
         if (event.target?.result) {
-          updateTileInState(selectedTileId!, {
-            ...activeData,
-            photo: event.target.result as string
-          });
+          const resultUrl = event.target.result as string;
+          setTimeout(() => {
+            updateAllTargetsWithPhoto(resultUrl);
+            setToast({
+              message: "Upload Successful 📍",
+              description: `Your map marker image overlay was saved to ${targetTileIds.length} sector(s) with fallback parameters.`,
+              type: "success"
+            });
+          }, 1500);
         }
       };
       reader.readAsDataURL(file);
-      setToast({
-        message: "Upload Successful 📍",
-        description: "Your map marker image overlay was saved with default parameters.",
-        type: "success"
-      });
     } finally {
       targetInput.value = '';
     }
@@ -5506,15 +5701,18 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
             <div>
               <h1 className="text-base md:text-lg font-bold text-slate-100 flex items-center gap-1.5 leading-none">
                 Football Fanland
-                {isHeaderCollapsed ? (
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                ) : (
-                  <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                )}
+                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-b from-slate-700 via-slate-800 to-slate-950 border border-amber-600/40 shadow-[inset_0_1px_2px_rgba(255,255,255,0.15),0_2px_4px_rgba(0,0,0,0.5),0_0_8px_rgba(245,158,11,0.2)] relative cursor-pointer group active:scale-95 transition-transform duration-200 ml-1 shrink-0">
+                  {/* Detailed, etched-gold inner ring */}
+                  <span className="absolute inset-[1px] rounded-full border border-amber-500/60 pointer-events-none" />
+                  {/* Warm radial glow behind the icon */}
+                  <span className="absolute inset-0 rounded-full bg-[radial-gradient(circle,_rgba(251,191,36,0.25)_0%,_transparent_70%)] pointer-events-none" />
+                  {isHeaderCollapsed ? (
+                    <ChevronDown className="w-3.5 h-3.5 text-amber-400 font-bold relative z-10 drop-shadow-[0_1px_1px_rgba(0,0,0,0.5)]" />
+                  ) : (
+                    <ChevronUp className="w-3.5 h-3.5 text-amber-400 font-bold relative z-10 drop-shadow-[0_1px_1px_rgba(0,0,0,0.5)]" />
+                  )}
+                </span>
               </h1>
-              <span className="text-[10px] md:text-[11px] text-emerald-400 font-mono tracking-wider uppercase font-semibold block mt-1">
-                Fan Grid Territory
-              </span>
             </div>
 
             {/* Account Status Badge & My Tiles section */}
@@ -5533,6 +5731,33 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                 <span>My Tiles ({Object.values(tiles).filter((t: any) => t.claimedBy === (loggedInUser?.username || 'Guest') && !t.isMergedChild).length})</span>
               </button>
 
+              {/* High-Fidelity Notifications Bell */}
+              {loggedInUser && (() => {
+                const unpredictedFixturesCount = FOOTBALL_FIXTURES.filter(f => !predictions[f.id]).length;
+                const pendingPredictionsCount = (Object.values(predictions) as any[]).filter(p => p.status === 'simulating').length;
+                const totalNotificationsCount = unpredictedFixturesCount + pendingPredictionsCount;
+
+                return (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowNotificationDrawer(true);
+                    }}
+                    className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 text-amber-400 hover:text-amber-300 transition-all flex items-center justify-center relative cursor-pointer hover:border-amber-500/30 shrink-0"
+                    title="View Fixtures & Predictions Notifications"
+                    id="notifications-bell-btn"
+                  >
+                    <Bell className="w-4 h-4" />
+                    {totalNotificationsCount > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-gradient-to-r from-red-500 to-rose-600 text-white font-mono text-[8px] font-black w-4.5 h-4.5 rounded-full flex items-center justify-center border border-slate-950 shadow-[0_0_8px_rgba(239,68,68,0.7)] animate-pulse">
+                        {totalNotificationsCount}
+                      </span>
+                    )}
+                  </button>
+                );
+              })()}
+
               {loggedInUser ? (
                 <div 
                   className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 pl-2 pr-1 py-1 rounded-xl shrink-0 animate-fade-in"
@@ -5542,7 +5767,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                       {loggedInUser.username}
                     </div>
                     <div className="text-[8px] text-teal-400 font-mono leading-none mt-0.5 font-bold uppercase font-semibold">
-                      {freeSlots} Slots
+                      {parseFloat(freeSlots.toFixed(2))} Slots
                     </div>
                   </div>
                   <button
@@ -5599,14 +5824,14 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                       ) : (
                         <Gamepad2 className="w-4 h-4 text-teal-400 shrink-0" />
                       )}
-                      <span>{loggedInUser.isAdmin ? 'Role: Central Admin' : 'Tile claim slots:'}</span>
+                      <span>{loggedInUser.isAdmin ? 'Role: Central Admin' : 'Earned Tile Balance:'}</span>
                     </span>
                     <span className={`font-mono text-[11px] font-extrabold px-2 py-0.5 rounded-md border ${
                       loggedInUser.isAdmin 
                         ? 'text-amber-400 bg-amber-955/40 border-amber-500/30' 
                         : 'text-teal-300 bg-teal-955/40 border-teal-500/35'
                     }`}>
-                      {loggedInUser.isAdmin ? 'SUPER ADMIN 👑' : `${freeSlots} Available`}
+                      {loggedInUser.isAdmin ? 'SUPER ADMIN 👑' : `${parseFloat(freeSlots.toFixed(2))} Available`}
                     </span>
                   </div>
 
@@ -5670,7 +5895,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                   <span className="flex items-center gap-1.5">
                     <span>Earn Slots</span>
                     <span className="bg-slate-950 text-amber-300 font-extrabold text-[9px] px-1.5 py-0.5 rounded-full font-mono min-w-[16px] text-center">
-                      {freeSlots}
+                      {parseFloat(freeSlots.toFixed(2))}
                     </span>
                   </span>
                 </button>
@@ -6018,139 +6243,154 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                   {/* Multi-select toggle (add more slots) */}
                   <div>
                     {isMultiSelectMode ? (
-                      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex flex-col gap-2 shadow-inner">
-                        <div className="flex justify-between items-center text-[10px] font-mono text-amber-400 font-bold">
-                          <span className="flex items-center gap-1">
-                            🛠️ Selection Tool
-                          </span>
-                          <span className="bg-amber-500 text-slate-950 font-extrabold px-1.5 py-0.5 rounded-full text-[9px]">
-                            {multiSelectedTileIds.length} Selected
-                          </span>
-                        </div>
-
-                        {/* Clean segment controller tool switcher */}
-                        <div className="grid grid-cols-2 bg-slate-950 p-1 rounded-xl border border-slate-800 gap-1 my-0.5">
-                          <button
-                            type="button"
-                            onClick={() => setMultiSelectTool('brush')}
-                            className={`py-1.5 px-2 rounded-lg text-[9px] font-mono font-bold uppercase transition-all tracking-wide flex items-center justify-center gap-1 cursor-pointer ${
-                              multiSelectTool === 'brush'
-                                ? 'bg-amber-500 text-slate-950 font-black'
-                                : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
-                            }`}
-                          >
-                            <span>🖌️ Brush Paint</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setMultiSelectTool('box')}
-                            className={`py-1.5 px-2 rounded-lg text-[9px] font-mono font-bold uppercase transition-all tracking-wide flex items-center justify-center gap-1 cursor-pointer ${
-                              multiSelectTool === 'box'
-                                ? 'bg-amber-500 text-slate-950 font-black'
-                                : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
-                            }`}
-                          >
-                            <span>📐 Corner Box</span>
-                          </button>
-                        </div>
-
-                        <p className="text-[9px] text-slate-400 font-mono leading-relaxed my-0.5">
-                          {multiSelectTool === 'brush'
-                            ? 'Tap grids individually or swipe your cursor/finger over cells to paint highlight!'
-                            : 'Press and drag a visual box from one corner to any other diagonally, then release to highlight!'
-                          }
-                        </p>
-                        {multiSelectedTileIds.length > 0 && (
-                          <div className="text-[10px] font-mono text-slate-300 bg-slate-950/60 p-2 rounded-xl border border-slate-850/50 leading-normal flex flex-col gap-0.5 mt-0.5">
-                            <div className="flex justify-between">
-                              <span>Sectors Highlighted:</span>
-                              <span className="text-white font-bold">{multiSelectedTileIds.length} Tiles</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Gift Tiles Cost:</span>
-                              <span className="text-amber-400 font-bold">
-                                {multiSelectedTileIds.length.toFixed(1)} Tiles
-                              </span>
-                            </div>
+                      <>
+                        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex flex-col gap-2 shadow-inner">
+                          <div className="flex justify-between items-center text-[10px] font-mono text-amber-400 font-bold">
+                            <span className="flex items-center gap-1">
+                              🛠️ Selection Tool
+                            </span>
+                            <span className="bg-amber-500 text-slate-950 font-extrabold px-1.5 py-0.5 rounded-full text-[9px]">
+                              {multiSelectedTileIds.length} Selected
+                            </span>
                           </div>
-                        )}
-                        
-                        {/* Interactive Selection Action buttons place below brush selector enabled element */}
-                        <div className="flex gap-1.5 mt-1">
-                          <button
-                            type="button"
-                            onClick={() => setMultiSelectedTileIds([])}
-                            className="w-1/3 py-2 bg-slate-950 hover:bg-slate-900 text-slate-400 hover:text-white font-mono font-bold rounded-xl text-[9px] uppercase tracking-wider cursor-pointer border border-slate-800"
-                            title="Clear Highlights"
-                          >
-                            Clear Selection
-                          </button>
+
+                          {/* Clean segment controller tool switcher */}
+                          <div className="grid grid-cols-2 bg-slate-950 p-1 rounded-xl border border-slate-800 gap-1 my-0.5">
+                            <button
+                              type="button"
+                              onClick={() => setMultiSelectTool('brush')}
+                              className={`py-1.5 px-2 rounded-lg text-[9px] font-mono font-bold uppercase transition-all tracking-wide flex items-center justify-center gap-1 cursor-pointer ${
+                                multiSelectTool === 'brush'
+                                  ? 'bg-amber-500 text-slate-950 font-black'
+                                  : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
+                              }`}
+                            >
+                              <span>🖌️ Brush Paint</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setMultiSelectTool('box')}
+                              className={`py-1.5 px-2 rounded-lg text-[9px] font-mono font-bold uppercase transition-all tracking-wide flex items-center justify-center gap-1 cursor-pointer ${
+                                multiSelectTool === 'box'
+                                  ? 'bg-amber-500 text-slate-950 font-black'
+                                  : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
+                              }`}
+                            >
+                              <span>📐 Corner Box</span>
+                            </button>
+                          </div>
+
+                          <p className="text-[9px] text-slate-400 font-mono leading-relaxed my-0.5">
+                            {multiSelectTool === 'brush'
+                              ? 'Tap grids individually or swipe your cursor/finger over cells to paint highlight!'
+                              : 'Press and drag a visual box from one corner to any other diagonally, then release to highlight!'
+                            }
+                          </p>
+                          {multiSelectedTileIds.length > 0 && (
+                            <div className="text-[10px] font-mono text-slate-300 bg-slate-950/60 p-2 rounded-xl border border-slate-850/50 leading-normal flex flex-col gap-0.5 mt-0.5">
+                              <div className="flex justify-between">
+                                <span>Sectors Highlighted:</span>
+                                <span className="text-white font-bold">{multiSelectedTileIds.length} Tiles</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Gift Tiles Cost:</span>
+                                <span className="text-amber-400 font-bold">
+                                  {multiSelectedTileIds.length.toFixed(1)} Tiles
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Interactive Selection Action buttons place below brush selector enabled element */}
+                          <div className="flex gap-1.5 mt-1">
+                            <button
+                              type="button"
+                              onClick={() => setMultiSelectedTileIds([])}
+                              className="w-1/3 py-2 bg-slate-950 hover:bg-slate-900 text-slate-400 hover:text-white font-mono font-bold rounded-xl text-[9px] uppercase tracking-wider cursor-pointer border border-slate-800"
+                              title="Clear Highlights"
+                            >
+                              Clear Selection
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={multiSelectedTileIds.length < 2}
+                              onClick={handleMergeAction}
+                              className={`w-2/3 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-1 ${
+                                multiSelectedTileIds.length >= 2
+                                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-extrabold shadow-md hover:scale-[1.01]'
+                                  : 'bg-slate-950 text-slate-600 border border-slate-850/40 cursor-not-allowed'
+                              }`}
+                              title="Merge highlighted grids into a single fansite region for image overlay"
+                            >
+                              🧩 Merge for Big Photo ({multiSelectedTileIds.length})
+                            </button>
+                          </div>
 
                           <button
                             type="button"
-                            disabled={multiSelectedTileIds.length < 2}
-                            onClick={handleMergeAction}
-                            className={`w-2/3 py-2 rounded-xl text-[9px] font-bold uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-1 ${
-                              multiSelectedTileIds.length >= 2
-                                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-extrabold shadow-md hover:scale-[1.01]'
-                                : 'bg-slate-950 text-slate-600 border border-slate-850/40 cursor-not-allowed'
-                            }`}
-                            title="Merge highlighted grids into a single fansite region"
+                            onClick={() => {
+                              setIsMultiSelectMode(false);
+                              setMultiSelectedTileIds([]);
+                              if (isMobile) {
+                                setMobileSheetState('expanded');
+                              }
+                            }}
+                            className="py-1 px-2.5 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 font-bold rounded-lg text-[9px] uppercase font-mono transition-all cursor-pointer text-center w-full mt-0.5"
                           >
-                            🧩 Merge Region ({multiSelectedTileIds.length})
+                            Cancel Multi-Select
                           </button>
                         </div>
 
+                        {/* Step 1 Next Button */}
+                        <div className="flex justify-end mt-2 pt-2 border-t border-slate-900/60">
+                          <button
+                            id="btn-drawer-next-step-1"
+                            type="button"
+                            onClick={() => {
+                              setDrawerActiveWindow('team_select');
+                            }}
+                            className="py-2.5 px-6 bg-gradient-to-tr from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer transition-all shadow-md active:scale-95"
+                          >
+                            Next ➔
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-2.5 w-full mt-1 pt-2 border-t border-slate-900/60">
                         <button
                           type="button"
                           onClick={() => {
-                            setIsMultiSelectMode(false);
-                            setMultiSelectedTileIds([]);
+                            setIsMultiSelectMode(true);
+                            setMultiSelectedTileIds([selectedTileId!]);
+                            setMultiSelectTargetTeam(tempTeam !== 'None' ? tempTeam : 'None');
                             if (isMobile) {
-                              setMobileSheetState('expanded');
+                              setMobileSheetState('collapsed');
                             }
+                            setToast({
+                              message: "Multi-Select Mode Active! 🖌️",
+                              description: "Tap other tiles on the map to add them to your selection.",
+                              type: "success"
+                            });
                           }}
-                          className="py-1 px-2.5 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 font-bold rounded-lg text-[9px] uppercase font-mono transition-all cursor-pointer text-center w-full mt-0.5"
+                          className="flex-1 py-2.5 bg-slate-950 border border-slate-800 hover:border-slate-700 text-amber-500 hover:text-amber-400 font-extrabold rounded-xl text-[10px] uppercase font-mono tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                          title="Add more slots starting with this sector"
                         >
-                          Cancel Multi-Select
+                          <span>🧩 Add More Slots</span>
+                        </button>
+
+                        <button
+                          id="btn-drawer-next-step-1"
+                          type="button"
+                          onClick={() => {
+                            setDrawerActiveWindow('team_select');
+                          }}
+                          className="py-2.5 px-6 bg-gradient-to-tr from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer transition-all shadow-md active:scale-95 whitespace-nowrap"
+                        >
+                          Next ➔
                         </button>
                       </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsMultiSelectMode(true);
-                          setMultiSelectedTileIds([selectedTileId!]);
-                          setMultiSelectTargetTeam(tempTeam !== 'None' ? tempTeam : 'None');
-                          if (isMobile) {
-                            setMobileSheetState('collapsed');
-                          }
-                          setToast({
-                            message: "Multi-Select Mode Active! 🖌️",
-                            description: "Tap other tiles on the map to add them to your selection.",
-                            type: "success"
-                          });
-                        }}
-                        className="w-full py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-extrabold rounded-xl text-[10px] uppercase font-mono tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-lg cursor-pointer"
-                        title="Add more slots starting with this sector"
-                      >
-                        <span>🧩 Add More Slots</span>
-                      </button>
                     )}
-                  </div>
-
-                  {/* Step 1 Next Button */}
-                  <div className="flex justify-end mt-2 pt-2 border-t border-slate-900/60">
-                    <button
-                      id="btn-drawer-next-step-1"
-                      type="button"
-                      onClick={() => {
-                        setDrawerActiveWindow('team_select');
-                      }}
-                      className="py-2.5 px-6 bg-gradient-to-tr from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-bold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer transition-all shadow-md active:scale-95"
-                    >
-                      Next ➔
-                    </button>
                   </div>
                 </div>
               )}
@@ -7030,14 +7270,14 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                   return (
                     <>
                       <div className="grid grid-cols-1 gap-2.5 mb-4 font-mono">
-                        {/* Option A: Gift Tiles Panel */}
+                        {/* Option A: Earned Tile Balance Panel (Integrated Gift Tiles + freeSlots) */}
                         <div className="text-left bg-slate-950/70 border border-slate-800 rounded-2xl p-3 select-none">
                           <div className="flex items-center gap-1.5 border-b border-slate-900 pb-1 mb-1.5 justify-between">
                             <span className="flex items-center gap-1">
-                              <Coins className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-                              <span className="text-[8px] text-slate-400 tracking-wider">OPTION A: GIFT TILES</span>
+                              <Gamepad2 className="w-3.5 h-3.5 text-teal-400 animate-pulse" />
+                              <span className="text-[8px] text-teal-400 tracking-wider font-extrabold">OPTION A: EARNED TILE BALANCE</span>
                             </span>
-                            <span className="text-[9px] text-amber-300 font-bold bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-900">
+                            <span className="text-[9px] text-teal-300 font-extrabold bg-teal-950/50 px-1.5 py-0.5 rounded border border-teal-900">
                               Free!
                             </span>
                           </div>
@@ -7048,15 +7288,15 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                             </div>
                             <div className="flex justify-between">
                               <span>Cost per Sector:</span>
-                              <span className="text-slate-300">1.0 Gift Tile</span>
+                              <span className="text-slate-300">1.0 Earned Tile</span>
                             </div>
                             <div className="flex justify-between">
                               <span>Your Balance:</span>
-                              <span className="text-slate-300">{giftTiles.toFixed(2)} Tiles</span>
+                              <span className="text-teal-300 font-extrabold">{parseFloat((freeSlots + giftTiles).toFixed(2))} Tiles</span>
                             </div>
-                            <div className="flex justify-between border-t border-slate-900 pt-1 mt-1 font-bold text-amber-400">
-                              <span>Total Gift Tiles:</span>
-                              <span>{qty.toFixed(1)} Tiles</span>
+                            <div className="flex justify-between border-t border-slate-900 pt-1 mt-1 font-bold text-teal-400">
+                              <span>Total Earned Tiles:</span>
+                              <span>{qty.toFixed(2)} Tiles</span>
                             </div>
                           </div>
                         </div>
@@ -7088,19 +7328,21 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
 
                       {/* Verified Action and Wallet checks */}
                       <div className="flex flex-col gap-2.5 mb-4">
-                        {giftTiles >= qty ? (
+                        {(freeSlots + giftTiles) >= qty && (
                           <button
-                            onClick={executeGiftTilePayment}
-                            className="w-full py-2 bg-slate-950 hover:bg-slate-900 text-amber-400 hover:text-amber-300 border border-amber-500/20 hover:border-amber-500/50 font-bold rounded-xl text-[10px] transition-all flex items-center justify-center gap-1.5 cursor-pointer uppercase tracking-wider font-mono shadow-md"
+                            onClick={executeFreeSlotPayment}
+                            className="w-full py-2 bg-slate-950 hover:bg-slate-900 text-teal-400 hover:text-teal-300 border border-teal-500/20 hover:border-teal-500/50 font-bold rounded-xl text-[10px] transition-all flex items-center justify-center gap-1.5 cursor-pointer uppercase tracking-wider font-mono shadow-md animate-pulse"
                           >
-                            <Coins className="w-3.5 h-3.5 text-amber-400" />
-                            Secure with Gift Tiles ({qty.toFixed(1)})
+                            <Gamepad2 className="w-3.5 h-3.5 text-teal-400" />
+                            Secure with Earned Tiles ({qty.toFixed(1)})
                           </button>
-                        ) : (
-                          <div className="p-2.5 bg-amber-950/10 border border-amber-500/20 rounded-xl text-left font-mono">
-                            <span className="text-[8px] text-amber-400 font-extrabold uppercase block mb-0.5">💡 Tip: Prediction Rewards</span>
-                            <span className="text-[9px] text-slate-400 block leading-normal">
-                              Enter match results in the Arena page to claim Gift Tiles and secure sectors for free!
+                        )}
+
+                        {(freeSlots + giftTiles) < qty && (
+                          <div className="p-2.5 bg-amber-955/10 border border-amber-500/20 rounded-xl text-left font-mono">
+                            <span className="text-[8px] text-amber-400 font-extrabold uppercase block mb-0.5">💡 Tip: Prediction & Referral Rewards</span>
+                            <span className="text-[9px] text-slate-455 block leading-normal">
+                              Enter match results or refer friends to claim Earned Tiles and secure sectors for free!
                             </span>
                           </div>
                         )}
@@ -7284,35 +7526,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                     </div>
                     
                     <div className="flex flex-col gap-3.5">
-                      {[
-                        {
-                          id: 'match1',
-                          title: '🏆 Kozhikode Riverbank Superclásico',
-                          teamH: 'Argentina Fan Alliance',
-                          teamA: 'Brazil Samba FC',
-                          emojiH: '🇦🇷',
-                          emojiA: '🇧🇷',
-                          time: 'Tonight, 8:00 PM'
-                        },
-                        {
-                          id: 'match2',
-                          title: '⚓ Malabar Beach Sevens Derby',
-                          teamH: 'Portugal Fan Block',
-                          teamA: 'France Blues Block',
-                          emojiH: '🇵🇹',
-                          emojiA: '🇫🇷',
-                          time: 'Tomorrow, 9:30 PM'
-                        },
-                        {
-                          id: 'match3',
-                          title: '⚡ Malappuram Sevens Final KO',
-                          teamH: 'Malappuram Giants FC',
-                          teamA: 'Gokulam Beach Rovers',
-                          emojiH: '🟢',
-                          emojiA: '🟡',
-                          time: 'Sunday, 7:00 PM'
-                        }
-                      ].map(match => {
+                      {FOOTBALL_FIXTURES.map(match => {
                         const chosenObj = predictions[match.id];
                         const chosenVal = chosenObj ? chosenObj.choice : undefined;
                         const statusVal = chosenObj ? chosenObj.status : undefined;
@@ -8158,6 +8372,258 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
             </motion.div>
           </div>
         )}
+      </AnimatePresence>
+
+      {/* Dynamic Navigation & Fixture Reminders Notification Drawer */}
+      <AnimatePresence>
+        {showNotificationDrawer && (
+          <div className="absolute inset-0 z-50 flex justify-end bg-slate-950/80 backdrop-blur-sm">
+            {/* Closes drawer on clicking empty mask */}
+            <div className="absolute inset-0 cursor-pointer animate-fadeIn" onClick={() => setShowNotificationDrawer(false)} />
+
+            <motion.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 26, stiffness: 210 }}
+              className="relative w-full max-w-sm h-full bg-slate-950 border-l border-slate-900 shadow-[0_0_50px_rgba(0,0,0,0.95)] flex flex-col p-5 overflow-hidden z-10"
+              id="notification-drawer-container"
+            >
+              {/* Top ambient color rings */}
+              <div className="absolute -top-16 -left-16 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
+              <div className="absolute -bottom-16 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none" />
+
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3.5 border-b border-slate-900 mb-5 relative z-10 animate-fade-in">
+                <div className="flex items-center gap-2">
+                  <span className="p-2 bg-amber-500/10 rounded-xl border border-amber-500/20 shadow-inner">
+                    <Bell className="w-4 h-4 text-amber-400 animate-bounce" />
+                  </span>
+                  <div>
+                    <h3 className="text-xs font-black text-white leading-tight uppercase tracking-wider font-sans">Notification Hub</h3>
+                    <p className="text-[9px] font-mono text-slate-500">Upcoming Fixtures & predictions</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowNotificationDrawer(false)}
+                  className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-white cursor-pointer transition-all border border-slate-850"
+                  id="close-drawer-inner-btn"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Main Content scroll area */}
+              <div className="flex-1 overflow-y-auto scrollbar-none flex flex-col gap-5 relative z-10 animate-fade-in pb-4">
+                
+                {/* 1. UPCOMING FIXTURES REMINDERS */}
+                <div>
+                  <span className="text-[9px] font-mono font-extrabold uppercase tracking-widest text-slate-400 bg-slate-900/60 px-2 py-0.5 rounded-md border border-slate-900 inline-block mb-3.5">
+                    ⚽ Fixture Reminders (Unpredicted)
+                  </span>
+
+                  {(() => {
+                    const unpredicted = FOOTBALL_FIXTURES.filter(f => !predictions[f.id]);
+                    if (unpredicted.length === 0) {
+                      return (
+                        <div className="bg-emerald-950/20 border border-emerald-900/30 rounded-xl p-4 text-center">
+                          <Check className="w-6 h-6 text-emerald-400 mx-auto mb-1.5 animate-pulse" />
+                          <span className="text-[10px] font-bold text-emerald-300">All fixtures predicted! You are ready for kick-off. 🚀</span>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="flex flex-col gap-3">
+                        {unpredicted.map(f => (
+                          <div key={f.id} className="bg-slate-900/35 border border-slate-900 p-3 rounded-xl hover:border-slate-850 transition-colors shadow-sm">
+                            <div className="flex items-center justify-between gap-1.5 mb-1.5">
+                              <span className="text-[10.5px] font-bold text-white max-w-[170px] truncate">{f.title}</span>
+                              <span className="text-[8px] font-mono text-amber-400 font-extrabold px-1.5 py-0.5 rounded bg-amber-950/25 border border-amber-900/30 shrink-0">{f.time}</span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 leading-none">
+                              {f.emojiH} {f.teamH.split(' ')[0]} vs {f.emojiA} {f.teamA.split(' ')[0]}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowNotificationDrawer(false);
+                                setEarnSlotsTab('predictions');
+                                setShowPredictionModal(true);
+                              }}
+                              className="w-full mt-3 py-1.5 text-center bg-gradient-to-r from-amber-500/10 to-amber-500/20 hover:from-amber-500/20 hover:to-amber-500/30 text-amber-400 text-[10px] font-mono font-bold rounded-lg border border-amber-500/25 hover:border-amber-400/50 transition-all cursor-pointer"
+                            >
+                              🔮 Place Prediction (+0.5 Gift Tiles)
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* 2. PENDING PREDICTIONS STATUS */}
+                <div>
+                  <span className="text-[9px] font-mono font-extrabold uppercase tracking-widest text-slate-400 bg-slate-900/60 px-2 py-0.5 rounded-md border border-slate-900 inline-block mb-3.5">
+                    🔮 My active predictions status
+                  </span>
+                  {(() => {
+                    const activePredictions = FOOTBALL_FIXTURES.filter(f => predictions[f.id]);
+                    if (activePredictions.length === 0) {
+                      return (
+                        <div className="bg-slate-900/20 border border-slate-900/40 rounded-xl p-4 text-center text-[10px] text-slate-500 font-mono">
+                          No active predictions currently placed. Submit SCORE predictions to earn complimentary Map land!
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="flex flex-col gap-3">
+                        {activePredictions.map(f => {
+                          const pred = predictions[f.id];
+                          const isSimulating = pred.status === 'simulating';
+                          return (
+                            <div key={f.id} className="bg-slate-900/35 border border-slate-900 p-3 rounded-xl flex flex-col gap-1.5 shadow-sm">
+                              <div className="flex items-center justify-between gap-1.5">
+                                <span className="text-[10px] font-bold text-white max-w-[175px] truncate">{f.title}</span>
+                                {isSimulating ? (
+                                  <span className="text-[8px] font-mono uppercase bg-amber-950/20 border border-amber-900/30 text-amber-400 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0">
+                                    <span className="w-1 h-1 bg-amber-500 rounded-full animate-ping" />
+                                    Simulating
+                                  </span>
+                                ) : (
+                                  <span className={`text-[8px] font-mono uppercase px-1.5 py-0.5 rounded font-extrabold shrink-0 border ${
+                                    pred.status === 'won' ? 'bg-emerald-950/20 border-emerald-500/20 text-emerald-400' : 'bg-red-950/20 border-red-500/20 text-red-400'
+                                  }`}>
+                                    {pred.status}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[9px] text-slate-400 font-mono">
+                                Predicted Outcome: <span className="text-white font-extrabold font-sans pr-1">{pred.choice}</span> win/draw
+                              </div>
+                              {pred.status === 'won' && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowNotificationDrawer(false);
+                                    setEarnSlotsTab('predictions');
+                                    setShowPredictionModal(true);
+                                  }}
+                                  className="w-full py-1 text-center bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-[9px] font-mono rounded-lg border border-emerald-500/30 transition-all cursor-pointer mt-1"
+                                >
+                                  🎁 Claim Complimentary Gift Tiles
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+              </div>
+
+              {/* Sidebar footer actions */}
+              <div className="pt-4 border-t border-slate-900 flex flex-col gap-2 relative z-10 animate-fade-in mt-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNotificationDrawer(false);
+                    setEarnSlotsTab('predictions');
+                    setShowPredictionModal(true);
+                  }}
+                  className="w-full py-2.5 text-center bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-sans font-black uppercase text-xs rounded-xl shadow-lg shadow-amber-500/10 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  🔮 Open Predict Arena
+                </button>
+                <p className="text-[8px] text-center text-slate-500 font-mono uppercase tracking-wider">Automated Referee Engine active</p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* High-Fidelity Login Reminder Welcome Toast */}
+      <AnimatePresence>
+        {showLoginReminderToast && loggedInUser && (() => {
+          const unpredicted = FOOTBALL_FIXTURES.filter(f => !predictions[f.id]);
+          const pendingOutcomes = (Object.values(predictions) as any[]).filter(p => p.status === 'simulating');
+
+          return (
+            <div 
+              className="fixed bottom-6 right-6 z-[100] max-w-sm w-full p-0.5 bg-gradient-to-tr from-amber-500 via-emerald-500 to-teal-500 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.85)] animate-slideUp"
+              id="login-reminder-toast-card"
+            >
+              <div className="bg-slate-950 rounded-[14px] p-4 flex flex-col gap-3 relative overflow-hidden">
+                {/* Visual Glow backgrounds */}
+                <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
+
+                <button
+                  onClick={() => setShowLoginReminderToast(false)}
+                  className="absolute right-3 top-3 text-slate-400 hover:text-white p-1 bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer transition-colors"
+                  id="close-toast-btn"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-gradient-to-tr from-amber-500/10 to-amber-500/20 border border-amber-500/30 rounded-xl relative">
+                    <span className="absolute inset-0 rounded-xl bg-amber-500/5 animate-ping" />
+                    <Trophy className="w-5 h-5 text-amber-400 relative z-10" />
+                  </div>
+                  <div className="max-w-[215px]">
+                    <h4 className="text-xs font-black text-white leading-snug truncate">Welcome Back, {loggedInUser.username}! 👋</h4>
+                    <p className="text-[9px] font-mono text-slate-400 mt-0.5 uppercase tracking-wider">Fan Reminders Queue</p>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-900 pt-2.5 pb-1 flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-mono">
+                    <span className="text-slate-400 flex items-center gap-1.5">📅 Upcoming Fixtures:</span>
+                    <span className="text-amber-400 font-extrabold">{unpredicted.length} Pending</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] font-mono">
+                    <span className="text-slate-400 flex items-center gap-1.5">🔮 Pending Outcomes:</span>
+                    <span className="text-teal-400 font-extrabold">{pendingOutcomes.length} In-Play</span>
+                  </div>
+                </div>
+
+                {unpredicted.length > 0 && (
+                  <div className="bg-slate-900/50 border border-slate-900 rounded-xl p-2.5">
+                    <span className="text-[8px] font-mono text-amber-400 font-extrabold block mb-1 uppercase tracking-wider">🔥 HOT MATCH TODAY:</span>
+                    <span className="text-[10px] font-bold text-white block truncate">{unpredicted[0].title}</span>
+                    <span className="text-[8.5px] text-slate-400 font-mono mt-0.5 block">{unpredicted[0].emojiH} {unpredicted[0].teamH.split(' ')[0]} vs {unpredicted[0].emojiA} {unpredicted[0].teamA.split(' ')[0]} • {unpredicted[0].time}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowLoginReminderToast(false);
+                      setShowNotificationDrawer(true);
+                    }}
+                    className="py-2 text-center bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-350 hover:text-white text-[10px] font-mono font-bold rounded-xl transition-all cursor-pointer"
+                  >
+                    View Details 🔔
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowLoginReminderToast(false);
+                      setEarnSlotsTab('predictions');
+                      setShowPredictionModal(true);
+                    }}
+                    className="py-2 text-center bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-[10px] font-bold rounded-xl transition-all cursor-pointer"
+                  >
+                    Predict Now 🔮
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </AnimatePresence>
 
       {/* 7. Footer Policy/Information Modals Overlay */}
