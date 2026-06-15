@@ -82,8 +82,3 @@ export interface TeamStyle {
   textColor: string;
   flagEmoji: string;
 }
-
-export interface UserReferralData {
-  referredCount: number;
-  pendingFractionalTiles: number; // float representing progress (e.g. 0.1 per referral)
-}

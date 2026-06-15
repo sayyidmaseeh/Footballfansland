@@ -1,6 +1,6 @@
 {
-  "name": "Football Fanland",
+  "name": "Kerala Football Map",
   "description": "An interactive regional fan grid of Kerala, allowing fans to support their favorite teams, share chats, and upload photos.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
