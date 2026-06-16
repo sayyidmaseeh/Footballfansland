@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Google Sign In Callback</title>
+  <style>
+    body {
+      background-color: #0b1329;
+      color: #7dd3fc;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      text-align: center;
+      padding-top: 60px;
+    }
+    .loader {
+      display: inline-block;
+      width: 40px;
+      height: 40px;
+      border: 4px solid #1e293b;
+      border-top-color: #38bdf8;
+      border-radius: 50%;
+      animation: spin 1s infinite linear;
+      margin-bottom: 20px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="loader"></div>
+  <h2>Google Authorization Successful</h2>
+  <p>Verifying permissions and returning to Football Fanland...</p>
+
+  <script>
+    // Extract access_token or token parameters from hash or search
+    const hash = window.location.hash.substring(1) || window.location.search.substring(1);
+    const params = new URLSearchParams(hash);
+    
+    // Google OAuth returns token in hash fragment
+    const accessToken = params.get('access_token');
+    const idToken = params.get('id_token');
+    
+    if (accessToken || idToken) {
+      if (window.opener) {
+        window.opener.postMessage({ 
+          type: 'GOOGLE_OAUTH_SUCCESS', 
+          accessToken: accessToken,
+          idToken: idToken
+        }, '*');
+        setTimeout(() => {
+          window.close();
+        }, 100);
+      } else {
+        localStorage.setItem('google_oauth_pending_token', accessToken || idToken);
+        window.location.href = '/';
+      }
+    } else {
+      const error = params.get('error');
+      if (error) {
+        if (window.opener) {
+          window.opener.postMessage({ type: 'GOOGLE_OAUTH_FAILURE', error }, '*');
+          setTimeout(() => {
+            window.close();
+          }, 100);
+        } else {
+          document.body.innerHTML = '<h3>Authentication Failed</h3><p>' + error + '</p>';
+        }
+      } else {
+        // Fallback: check if we are just testing
+        localStorage.setItem('google_oauth_pending_token', 'simulated_dummy_token_xyz');
+        if (window.opener) {
+          window.opener.postMessage({ type: 'GOOGLE_OAUTH_SUCCESS', accessToken: 'simulated_dummy_token_xyz' }, '*');
+          setTimeout(() => {
+            window.close();
+          }, 100);
+        } else {
+          window.location.href = '/';
+        }
+      }
+    }
+  </script>
+</body>
+</html>

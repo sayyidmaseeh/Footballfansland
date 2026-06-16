@@ -56,3 +56,33 @@
 .animate-pulse-slow {
   animation: map-pulse 3s infinite ease-in-out;
 }
+
+/* Beautiful Animated Marching Ants for Corner-to-Corner Marquee selection box */
+@keyframes marquee-dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+.drag-selection-box {
+  stroke-dasharray: 6, 4 !important;
+  animation: marquee-dash 0.6s linear infinite !important;
+  stroke-linejoin: round !important;
+  stroke-linecap: round !important;
+}
+
+/* Active glow effects for button interactions */
+.btn-active-glow {
+  box-shadow: 0 0 18px 3px rgba(0, 242, 254, 0.8), inset 0 0 8px 1px rgba(0, 242, 254, 0.5) !important;
+  border-color: #00f2fe !important;
+  color: #00f2fe !important;
+  text-shadow: 0 0 8px rgba(0, 242, 254, 0.6) !important;
+  transition: all 0.1s ease-out !important;
+}
+
+/* Permit drag-box action to pass downstream to the leaflet map itself */
+.multi-select-box-tool-active .leaflet-interactive {
+  pointer-events: none !important;
+}
+
+
