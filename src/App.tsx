@@ -5645,6 +5645,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
     setLoadingPhotoTileIds(prev => [...prev, ...targetTileIds]);
 
     // Try uploading to Supabase Storage if configured
+    let failedStorageUpload = false;
     if (isSupabaseConfigured) {
       setToast({
         message: "Storing on Supabase... ☁️",
@@ -5668,13 +5669,20 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
           
           targetInput.value = '';
           return;
+        } else {
+          failedStorageUpload = true;
         }
       } catch (err) {
         console.error("Supabase direct upload failed:", err);
+        failedStorageUpload = true;
       }
       
       console.log("[Supabase Sandbox]: Storage upload unconfigured or missing bucket, falling back to local base64 compression.");
     }
+
+    const fallbackReason = !isSupabaseConfigured
+      ? "Supabase unconfigured, using optimized offline fallback"
+      : "Storage 'tile-photos' bucket missing, using optimized offline fallback";
 
     try {
       const originalSizeKB = (file.size / 1024).toFixed(1);
@@ -5689,9 +5697,9 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
             setTimeout(() => {
               updateAllTargetsWithPhoto(resultUrl);
               setToast({
-                message: "Image Uploaded! 📸",
-                description: `Loaded originally small image (${originalSizeKB} KB) to ${targetTileIds.length} sector(s) under the 100 KB threshold.`,
-                type: "success"
+                message: "Image Upload (Local Fallback) 📸",
+                description: `Loaded image (${originalSizeKB} KB). ${fallbackReason}.`,
+                type: "warning"
               });
             }, 1500);
           }
@@ -5791,8 +5799,8 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
 
         setToast({
           message: "Image Compressed! 📸✨",
-          description: `Successfully optimized size: ${originalSizeKB} KB ➔ ${compressedSizeKB} KB (Limit < 100 KB) for ${targetTileIds.length} sector(s).`,
-          type: "success"
+          description: `Optimized: ${originalSizeKB} KB ➔ ${compressedSizeKB} KB. ${fallbackReason}.`,
+          type: "warning"
         });
       }, 1500);
 
@@ -5806,9 +5814,9 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
           setTimeout(() => {
             updateAllTargetsWithPhoto(resultUrl);
             setToast({
-              message: "Upload Successful 📍",
-              description: `Your map marker image overlay was saved to ${targetTileIds.length} sector(s) with fallback parameters.`,
-              type: "success"
+              message: "Upload Successful (Local Fallback) 📍",
+              description: `Image saved with fallback parameters. ${fallbackReason}.`,
+              type: "warning"
             });
           }, 1500);
         }

@@ -155,6 +155,22 @@ export function markBucketAsMissing(bucketName: string) {
 }
 
 /**
+ * Mark a storage bucket as found.
+ */
+export function markBucketAsFound(bucketName: string) {
+  bucketStatusCache[bucketName] = 'exists';
+  try {
+    const missing = JSON.parse(localStorage.getItem('supabase_missing_buckets_v1') || '[]');
+    if (missing.includes(bucketName)) {
+      const filtered = missing.filter((b: string) => b !== bucketName);
+      localStorage.setItem('supabase_missing_buckets_v1', JSON.stringify(filtered));
+    }
+  } catch (e) {}
+  
+  window.dispatchEvent(new CustomEvent('supabase_tables_updated'));
+}
+
+/**
  * Check if we already know this bucket is missing.
  */
 export function isBucketMissing(bucketName: string): boolean {
@@ -342,7 +358,7 @@ export async function dbSignOut(): Promise<void> {
  * Upload an image file to Supabase Storage and return its public URL
  */
 export async function dbUploadImage(file: File, bucketName: string = 'tile-photos'): Promise<string | null> {
-  if (!isSupabaseConfigured || !supabase || isBucketMissing(bucketName)) return null;
+  if (!isSupabaseConfigured || !supabase) return null;
   
   try {
     const fileExt = file.name.split('.').pop() || 'jpg';
@@ -375,6 +391,8 @@ export async function dbUploadImage(file: File, bucketName: string = 'tile-photo
       .from(bucketName)
       .getPublicUrl(filePath);
       
+    // Mark bucket as verified and found since we completed a successful upload transaction!
+    markBucketAsFound(bucketName);
     return publicUrl;
   } catch (err) {
     console.log("[Supabase Sandbox]: Exception during image upload step, falling back to local base64:", err);
@@ -643,6 +661,8 @@ export async function dbVerifySchemasOnBoot(): Promise<string[]> {
         if (errorMsg.toLowerCase().includes('not found') || statusCode === 404 || errorMsg.toLowerCase().includes('bucket_not_found')) {
           markBucketAsMissing('tile-photos');
         }
+      } else {
+        markBucketAsFound('tile-photos');
       }
     } catch (e) {
       // Quiet ignore and fallback to upload-time evaluation
