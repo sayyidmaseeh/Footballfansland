@@ -249,6 +249,7 @@ export async function dbSignUp(
       email,
       password,
       options: {
+        emailRedirectTo: `${window.location.origin}/oauth-callback.html`,
         data: {
           username,
           favorite_club: favoriteClub,
