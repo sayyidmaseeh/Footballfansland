@@ -5306,6 +5306,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
       }
 
       // If Supabase is configured, use real Auth
+      let hasSupabaseLoginSucceeded = false;
       if (isSupabaseConfigured) {
         setToast({
           message: "Authenticating with Supabase... 🔑",
@@ -5313,50 +5314,75 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
           type: "info"
         });
 
-        const { user, error } = await dbSignIn(cleanEmail, passwordInput);
-        if (error) {
-          setToast({
-            message: "Authentication Failed! ⚠️",
-            description: error.message || "Incorrect email or password.",
-            type: "error"
-          });
-          return;
-        } else if (user) {
-          setLoggedInUser(user);
-          localStorage.setItem('kerala_logged_in_user', JSON.stringify(user));
-          
-          // Restore freeSlots info
-          const existingLocalUser = registeredUsers.find(u => u.email.toLowerCase() === user.email.toLowerCase());
-          const userSlots = existingLocalUser ? (existingLocalUser.freeSlots ?? adminAppSettings.defaultFreeSlots) : adminAppSettings.defaultFreeSlots;
-          
-          setFreeSlots(userSlots);
-          localStorage.setItem('kerala_claimed_free_slots_count', userSlots.toString());
+        try {
+          const { user, error } = await dbSignIn(cleanEmail, passwordInput);
+          if (error) {
+            const errorMsg = error.message || String(error);
+            console.warn("Supabase Sign-In error, checking fallback availability:", errorMsg);
+            
+            // If it's a network/fetch error, fall through to Sandbox mode
+            if (errorMsg.includes("fetch") || errorMsg.includes("Network") || errorMsg.includes("Failed to fetch") || errorMsg.includes("Load failed")) {
+              setToast({
+                message: "Cloud Connection Offline 🔌 Passing to Sandbox...",
+                description: "Cannot connect to the live database right now. Automatically authenticating via local sandbox credentials!",
+                type: "warning"
+              });
+              // Do NOT return; let it fall through to local lookup!
+            } else {
+              setToast({
+                message: "Authentication Failed! ⚠️",
+                description: errorMsg || "Incorrect email or password.",
+                type: "error"
+              });
+              return;
+            }
+          } else if (user) {
+            hasSupabaseLoginSucceeded = true;
+            setLoggedInUser(user);
+            localStorage.setItem('kerala_logged_in_user', JSON.stringify(user));
+            
+            // Restore freeSlots info
+            const existingLocalUser = registeredUsers.find(u => u.email.toLowerCase() === user.email.toLowerCase());
+            const userSlots = existingLocalUser ? (existingLocalUser.freeSlots ?? adminAppSettings.defaultFreeSlots) : adminAppSettings.defaultFreeSlots;
+            
+            setFreeSlots(userSlots);
+            localStorage.setItem('kerala_claimed_free_slots_count', userSlots.toString());
 
-          // Sync registration list locally
-          const updatedList = registeredUsers.filter(u => u.email.toLowerCase() !== user.email.toLowerCase());
-          const withCurrent = [...updatedList, { 
-            username: user.username, 
-            email: user.email, 
-            favoriteClub: user.favoriteClub, 
-            picture: user.picture || '',
-            freeSlots: userSlots,
-            emailVerified: true
-          }];
-          setRegisteredUsers(withCurrent);
-          localStorage.setItem('kerala_registered_users_list_v4', JSON.stringify(withCurrent));
-          
-          setShowLoginModal(false);
+            // Sync registration list locally
+            const updatedList = registeredUsers.filter(u => u.email.toLowerCase() !== user.email.toLowerCase());
+            const withCurrent = [...updatedList, { 
+              username: user.username, 
+              email: user.email, 
+              favoriteClub: user.favoriteClub, 
+              picture: user.picture || '',
+              freeSlots: userSlots,
+              emailVerified: true
+            }];
+            setRegisteredUsers(withCurrent);
+            localStorage.setItem('kerala_registered_users_list_v4', JSON.stringify(withCurrent));
+            
+            setShowLoginModal(false);
+            setToast({
+              message: `Welcome back, @${user.username}! ⚽`,
+              description: "Your session and territories are synced with Supabase cloud auth.",
+              type: "success"
+            });
+            return;
+          }
+        } catch (err: any) {
+          console.warn("Supabase auth failed with exception, passing to sandbox:", err);
           setToast({
-            message: `Welcome back, @${user.username}! ⚽`,
-            description: "Your session and territories are synced with Supabase cloud auth.",
-            type: "success"
+            message: "Cloud Database offline 🔌 Passing to Sandbox...",
+            description: "Automatically authenticating using your locally cached credentials!",
+            type: "warning"
           });
-          return;
+          // Do NOT return; let it fall through to local lookup!
         }
       }
 
-      // Standard User lookup
-      const foundUser = registeredUsers.find(u => u.email.toLowerCase() === cleanEmail.toLowerCase());
+      if (!hasSupabaseLoginSucceeded) {
+        // Standard User lookup
+        const foundUser = registeredUsers.find(u => u.email.toLowerCase() === cleanEmail.toLowerCase());
       if (foundUser) {
         if (foundUser.password && foundUser.password !== passwordInput) {
           setToast({
@@ -5435,6 +5461,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
           setIsAuthLoading(false);
         }, 500); // Loader persists until popup is fully rendered on screen
       }
+    }
     } finally {
       if (!delayLoadingDismissal) {
         setIsAuthLoading(false);
