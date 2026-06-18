@@ -88,6 +88,7 @@ export const supabase = isSupabaseConfigured
  */
 export function setSupabaseOverrides(url: string, key: string) {
   try {
+    resetMissingTableCache();
     if (url.trim() && key.trim()) {
       localStorage.setItem('VITE_SUPABASE_URL_OVERRIDE', url.trim());
       localStorage.setItem('VITE_SUPABASE_ANON_KEY_OVERRIDE', key.trim());
@@ -239,9 +240,9 @@ export async function dbSignUp(
   password: string,
   username: string,
   favoriteClub: string
-): Promise<{ user: any; error: any }> {
+): Promise<{ user: any; session: any; error: any }> {
   if (!isSupabaseConfigured || !supabase) {
-    return { user: null, error: new Error("Supabase is not configured.") };
+    return { user: null, session: null, error: new Error("Supabase is not configured.") };
   }
   try {
     const { data, error } = await supabase.auth.signUp({
@@ -254,22 +255,26 @@ export async function dbSignUp(
         },
       },
     });
-    if (error) return { user: null, error };
+    if (error) return { user: null, session: null, error };
     
     // Also save/upsert user profile in public.users table for the app's community screens
     if (data.user) {
-      await dbUpsertUser({
-        username,
-        email,
-        password,
-        favoriteClub,
-        isAdmin: false,
-        picture: ""
-      });
+      try {
+        await dbUpsertUser({
+          username,
+          email,
+          password,
+          favoriteClub,
+          isAdmin: false,
+          picture: ""
+        });
+      } catch (upsertError) {
+        console.warn("[Supabase Sandbox]: Profile auto-upsert warning during signup (likely RLS or missing table):", upsertError);
+      }
     }
-    return { user: data.user, error: null };
+    return { user: data.user, session: data.session, error: null };
   } catch (err: any) {
-    return { user: null, error: err };
+    return { user: null, session: null, error: err };
   }
 }
 
@@ -358,7 +363,19 @@ export async function dbSignOut(): Promise<void> {
  * Upload an image file to Supabase Storage and return its public URL
  */
 export async function dbUploadImage(file: File, bucketName: string = 'tile-photos'): Promise<string | null> {
-  if (!isSupabaseConfigured || !supabase) return null;
+  // Local base64 helper
+  const readAsBase64 = (f: File): Promise<string | null> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(f);
+    });
+  };
+
+  if (!isSupabaseConfigured || !supabase) {
+    return readAsBase64(file);
+  }
   
   try {
     const fileExt = file.name.split('.').pop() || 'jpg';
@@ -383,7 +400,8 @@ export async function dbUploadImage(file: File, bucketName: string = 'tile-photo
       } else {
         console.log(`[Supabase Sandbox]: Storage bucket upload warning (bucket might be missing or unconfigured): ${errMsg}`);
       }
-      return null;
+      // Fall back to base64 so that upload still acts fine in sandbox fallback!
+      return readAsBase64(file);
     }
     
     // Obtain the public URL
@@ -396,7 +414,7 @@ export async function dbUploadImage(file: File, bucketName: string = 'tile-photo
     return publicUrl;
   } catch (err) {
     console.log("[Supabase Sandbox]: Exception during image upload step, falling back to local base64:", err);
-    return null;
+    return readAsBase64(file);
   }
 }
 
@@ -565,12 +583,20 @@ export async function dbUpsertUser(user: {
   favoriteClub: string;
   isAdmin?: boolean;
   picture?: string;
+  freeSlots?: number;
+  emailVerified?: boolean;
 }): Promise<boolean> {
   // Update local list for seamless sync safely
   try {
     const currentList = JSON.parse(localStorage.getItem('kerala_registered_users_list_v4') || '[]');
+    const existing = currentList.find((u: any) => u.email.toLowerCase() === user.email.toLowerCase());
+    const updatedUser = {
+      ...user,
+      freeSlots: user.freeSlots !== undefined ? user.freeSlots : (existing ? existing.freeSlots : undefined),
+      emailVerified: user.emailVerified !== undefined ? user.emailVerified : (existing ? existing.emailVerified : undefined)
+    };
     const updatedList = currentList.filter((u: any) => u.email.toLowerCase() !== user.email.toLowerCase());
-    updatedList.push(user);
+    updatedList.push(updatedUser);
     localStorage.setItem('kerala_registered_users_list_v4', JSON.stringify(updatedList));
   } catch (err) {
     console.warn("Could not write user record to local storage cache:", err);
