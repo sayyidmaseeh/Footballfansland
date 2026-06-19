@@ -9620,12 +9620,18 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                                     </>
                                   ) : (
                                     <>
-                                      <span className="text-amber-300 font-bold hover:underline cursor-pointer select-all" onClick={() => {
-                                        navigator.clipboard.writeText('onboarding@resend.dev');
-                                        setToast({ message: "Onboarding Sender Copied!", description: "Copied onboarding@resend.dev to clipboard", type: "info" });
-                                      }}>onboarding@resend.dev 📋</span>
-                                      <span className="text-[8px] text-slate-405 mt-1 block">
-                                        For Resend SMTP, your Supabase 'Sender Email' <strong className="text-amber-400 font-extrabold">MUST</strong> match your verified custom domain or <span className="text-amber-300 font-semibold">'onboarding@resend.dev'</span> (sandbox). If mismatch, Resend rejects connection immediately!
+                                      <div className="flex flex-col items-end gap-1">
+                                        <span className="text-emerald-300 font-extrabold hover:underline cursor-pointer select-all text-[10px]" onClick={() => {
+                                          navigator.clipboard.writeText('noreply@footballfanland.com');
+                                          setToast({ message: "Sender Email Copied!", description: "Copied noreply@footballfanland.com to clipboard", type: "success" });
+                                        }}>noreply@footballfanland.com 📋</span>
+                                        <span className="text-slate-400 hover:underline cursor-pointer select-all text-[9px]" onClick={() => {
+                                          navigator.clipboard.writeText('onboarding@resend.dev');
+                                          setToast({ message: "Default Sandbox Copied!", description: "Copied onboarding@resend.dev to clipboard", type: "info" });
+                                        }}>or onboarding@resend.dev (sandbox) 📋</span>
+                                      </div>
+                                      <span className="text-[8px] text-slate-400 mt-1 block">
+                                        Since you already verified <strong className="text-amber-400">footballfanland.com</strong> on Resend, your Supabase 'Sender Email' <span className="text-emerald-400 font-bold">MUST</span> be an email at your domain (like <span className="text-emerald-300">noreply@footballfanland.com</span>). Mismatching sender addresses will cause Resend to reject the connection immediately!
                                       </span>
                                     </>
                                   )}
