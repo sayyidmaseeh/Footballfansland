@@ -48,9 +48,9 @@ export const isSupabaseConfigured = !!(
 );
 export const isSupabaseOverridden = !!(localUrl && localKey);
 
-// Startup console.log debugging
+// Startup console.log debugging with prominent browser console visual indicators
 (() => {
-  console.log(`[Supabase Client Initialization Debug]`);
+  console.log(`%c[Supabase Client Initialization Debug]`, 'font-weight: bold; font-size: 14px; color: #3b82f6; padding: 2px 4px;');
   console.log(`  - Configured status: ${isSupabaseConfigured}`);
   if (isSupabaseConfigured) {
     let credentialSource = "unknown";
@@ -61,10 +61,13 @@ export const isSupabaseOverridden = !!(localUrl && localKey);
     } else if (staticUrl && staticKey) {
       credentialSource = "VITE env variables (import.meta.env)";
     }
+    console.log(`%c  ✅ Supabase Initialized Successfully!`, 'color: #10b981; font-weight: bold; font-size: 12px;');
     console.log(`  - Credentials loaded from: ${credentialSource}`);
     console.log(`  - Supabase URL: ${supabaseUrl}`);
   } else {
-    console.log(`  - Reason: VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY is empty/missing.`);
+    console.log(`%c  ❌ Supabase Client Disabled / Fell back to offline memory database!`, 'color: #ef4444; font-weight: bold; font-size: 12px;');
+    console.log(`  - Reason: VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY has not been baked into the build yet.`);
+    console.log(`  - Hosting Tip (Cloudflare Pages): Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY inside Settings -> Environment Variables -> Production and trigger a direct REDEPLOY build to bake them in.`);
   }
 })();
 

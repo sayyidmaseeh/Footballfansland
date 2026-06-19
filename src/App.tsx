@@ -5651,6 +5651,17 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
   return (
     <div className="relative w-full h-screen bg-[#0b0f19] text-white font-sans overflow-hidden select-none">
       
+      {/* ⚠️ Database Disconnected Banner */}
+      {!isSupabaseConfigured && (
+        <div id="supabase-disconnected-warning-banner" className="absolute top-0 left-0 right-0 z-[110] bg-rose-600 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-center text-[11px] font-mono font-bold shadow-2xl border-b border-rose-500">
+          <span>⚠️ DATABASE NOT CONNECTED</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-white opacity-40"></span>
+          <span className="font-sans font-medium text-slate-100">
+            Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY inside Cloudflare Dashboard & redeploy to activate cloud sync!
+          </span>
+        </div>
+      )}
+
       {/* ⚠️ Database Schema Missing Warning Banner */}
       {missingTables.length > 0 && (
         <div id="missing-tables-warning-banner" className="absolute top-0 left-0 right-0 z-50 bg-amber-600 text-slate-950 px-4 py-3 flex flex-col md:flex-row items-center justify-between gap-3 text-center md:text-left text-xs font-bold shadow-2xl border-b border-amber-500 backdrop-blur-md">
