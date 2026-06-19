@@ -1151,6 +1151,7 @@ export default function App() {
           email: loginEmail,
           password: loginPassword,
           options: {
+            emailRedirectTo: window.location.origin,
             data: {
               username: loginUsername,
               favorite_club: loginFavClub
