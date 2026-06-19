@@ -9551,9 +9551,9 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
 
                           {/* Interactive copying of values to put in Supabase Console */}
                           <div className="space-y-2">
-                            <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-wider">Supabase SMTP Copy-Paste Parameters</span>
-                            <div className="bg-slate-950 p-3 rounded-xl border border-slate-850/80 space-y-2 font-mono text-[9.5px]">
-                              <div className="flex justify-between border-b border-slate-900 pb-1.5">
+                            <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-wider">Supabase Custom SMTP Parameters List</span>
+                            <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-850/80 space-y-2.5 font-mono text-[9.5px]">
+                              <div className="flex justify-between border-b border-slate-900 pb-1.5 items-center">
                                 <span className="text-slate-500">SMTP Host</span>
                                 <span className="text-white hover:underline cursor-pointer select-all" onClick={() => {
                                   navigator.clipboard.writeText(adminAppSettings.mailService === 'brevo' ? 'smtp-relay.brevo.com' : 'smtp.resend.com');
@@ -9562,11 +9562,25 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                                   {adminAppSettings.mailService === 'brevo' ? 'smtp-relay.brevo.com' : 'smtp.resend.com'} 📋
                                 </span>
                               </div>
-                              <div className="flex justify-between border-b border-slate-900 pb-1.5">
-                                <span className="text-slate-500">SMTP Port</span>
-                                <span className="text-white">587 (STARTTLS)</span>
+                              <div className="flex justify-between border-b border-slate-900 pb-1.5 items-center">
+                                <span className="text-slate-500 text-left">SMTP Port & SSL Config</span>
+                                <div className="text-right flex flex-col items-end">
+                                  {adminAppSettings.mailService === 'brevo' ? (
+                                    <>
+                                      <span className="text-emerald-400 font-bold">587</span>
+                                      <span className="text-[8px] text-slate-400">(Disable "Enable SSL" in Supabase)</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span className="text-amber-400 font-bold">465 (Recommended) or 587</span>
+                                      <span className="text-[8px] text-slate-400">
+                                        (For 465, <strong className="text-emerald-400 font-semibold">CHECK</strong> "Enable SSL"; For 587, <strong className="text-rose-400 font-semibold">UNCHECK</strong> "Enable SSL")
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
                               </div>
-                              <div className="flex justify-between border-b border-slate-900 pb-1.5">
+                              <div className="flex justify-between border-b border-slate-900 pb-1.5 items-center">
                                 <span className="text-slate-500">SMTP Username</span>
                                 <span className="text-white hover:underline cursor-pointer select-all" onClick={() => {
                                   navigator.clipboard.writeText(adminAppSettings.mailService === 'brevo' ? 'your_registered_brevo_email@domain.com' : 'resend');
@@ -9575,7 +9589,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                                   {adminAppSettings.mailService === 'brevo' ? 'your-brevo-login@email.com' : 'resend'} 📋
                                 </span>
                               </div>
-                              <div className="flex justify-between">
+                              <div className="flex justify-between border-b border-slate-900 pb-1.5 items-center">
                                 <span className="text-slate-500">SMTP Password/Key</span>
                                 <span className="text-amber-400 font-bold hover:underline cursor-pointer select-all" onClick={() => {
                                   navigator.clipboard.writeText(adminAppSettings.mailService === 'brevo' ? 'YourGeneratedMasterBrevoSmtpKey' : 're_YourSecretResendApiKey');
@@ -9583,6 +9597,27 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                                 }}>
                                   {adminAppSettings.mailService === 'brevo' ? 'Generate Brevo SMTP Key 🔑' : 're_YourSecretKey 🔑'} 📋
                                 </span>
+                              </div>
+                              <div className="flex justify-between items-start pt-1">
+                                <span className="text-slate-500 text-left">Sender/From Email Address</span>
+                                <div className="text-right flex flex-col items-end max-w-[65%] leading-normal">
+                                  {adminAppSettings.mailService === 'brevo' ? (
+                                    <>
+                                      <span className="text-slate-300">your-registered-sender@domain.com</span>
+                                      <span className="text-[8px] text-slate-500">Must be a valid sender verified in active Brevo account</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span className="text-amber-300 font-bold hover:underline cursor-pointer select-all" onClick={() => {
+                                        navigator.clipboard.writeText('onboarding@resend.dev');
+                                        setToast({ message: "Onboarding Sender Copied!", description: "Copied onboarding@resend.dev to clipboard", type: "info" });
+                                      }}>onboarding@resend.dev 📋</span>
+                                      <span className="text-[8px] text-slate-405 mt-1 block">
+                                        For Resend SMTP, your Supabase 'Sender Email' <strong className="text-amber-400 font-extrabold">MUST</strong> match your verified custom domain or <span className="text-amber-300 font-semibold">'onboarding@resend.dev'</span> (sandbox). If mismatch, Resend rejects connection immediately!
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           </div>
