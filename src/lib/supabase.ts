@@ -12,11 +12,61 @@ const staticKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
 const dynamicUrl = (window as any).__SUPABASE_URL__ || '';
 const dynamicKey = (window as any).__SUPABASE_ANON_KEY__ || '';
 
-export const supabaseUrl = localUrl || staticUrl || dynamicUrl || '';
-export const supabaseAnonKey = localKey || staticKey || dynamicKey || '';
+// Helper to determine the best available (untruncated and uncorrupted) Supabase key
+function getValidKey(...candidates: (string | undefined)[]): string {
+  // First attempt: Perfect JWT keys (start with 'eyJ' and have exactly 3 dot-separated parts)
+  for (const key of candidates) {
+    if (!key) continue;
+    const clean = key.trim();
+    if (clean.startsWith('eyJ') && clean.split('.').length === 3) {
+      return clean;
+    }
+  }
+  // Second attempt: Starts with 'eyJ' even if split counts are different
+  for (const key of candidates) {
+    if (!key) continue;
+    const clean = key.trim();
+    if (clean.startsWith('eyJ')) {
+      return clean;
+    }
+  }
+  // Fallback to first non-empty if none meet standard JWT structure
+  for (const key of candidates) {
+    if (key?.trim()) return key.trim();
+  }
+  return '';
+}
 
-export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey);
+export const supabaseUrl = localUrl || dynamicUrl || staticUrl || '';
+export const supabaseAnonKey = getValidKey(localKey, dynamicKey, staticKey);
+
+export const isSupabaseConfigured = !!(
+  supabaseUrl && 
+  supabaseUrl.startsWith('https://') && 
+  supabaseAnonKey && 
+  supabaseAnonKey.startsWith('eyJ')
+);
 export const isSupabaseOverridden = !!(localUrl && localKey);
+
+// Startup console.log debugging
+(() => {
+  console.log(`[Supabase Client Initialization Debug]`);
+  console.log(`  - Configured status: ${isSupabaseConfigured}`);
+  if (isSupabaseConfigured) {
+    let credentialSource = "unknown";
+    if (localUrl && localKey) {
+      credentialSource = "localStorage override";
+    } else if (dynamicUrl && dynamicKey) {
+      credentialSource = "window globals (__SUPABASE_URL__/__SUPABASE_ANON_KEY__)";
+    } else if (staticUrl && staticKey) {
+      credentialSource = "VITE env variables (import.meta.env)";
+    }
+    console.log(`  - Credentials loaded from: ${credentialSource}`);
+    console.log(`  - Supabase URL: ${supabaseUrl}`);
+  } else {
+    console.log(`  - Reason: VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY is empty/missing.`);
+  }
+})();
 
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey, {

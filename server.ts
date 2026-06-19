@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
+import fs from "fs";
 import { createClient } from "@supabase/supabase-js";
 import { createServer as createViteServer } from "vite";
 
@@ -13,11 +14,45 @@ const PORT = 3000;
 // Enable JSON body requests with safe ceiling for Base64 image transfers
 app.use(express.json({ limit: "15mb" }));
 
-// Resolve keys securely on the server
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+// Helper to determine the best available (untruncated and uncorrupted) Supabase key
+function getValidKey(...candidates: (string | undefined)[]): string {
+  // First attempt: Perfect JWT keys (start with 'eyJ' and have exactly 3 dot-separated parts)
+  for (const key of candidates) {
+    if (!key) continue;
+    const clean = key.trim();
+    if (clean.startsWith("eyJ") && clean.split(".").length === 3) {
+      return clean;
+    }
+  }
+  // Second attempt: Starts with 'eyJ' even if split counts are different
+  for (const key of candidates) {
+    if (!key) continue;
+    const clean = key.trim();
+    if (clean.startsWith("eyJ")) {
+      return clean;
+    }
+  }
+  // Fallback to first non-empty if none meet standard JWT structure
+  for (const key of candidates) {
+    if (key?.trim()) return key.trim();
+  }
+  return "";
+}
 
-const isSupabaseLive = !!(supabaseUrl && supabaseKey);
+// Resolve keys securely on the server
+const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
+const supabaseKey = getValidKey(
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  process.env.VITE_SUPABASE_ANON_KEY,
+  process.env.SUPABASE_ANON_KEY
+);
+
+const isSupabaseLive = !!(
+  supabaseUrl && 
+  supabaseUrl.startsWith("https://") && 
+  supabaseKey && 
+  supabaseKey.startsWith("eyJ")
+);
 const supabase = isSupabaseLive ? createClient(supabaseUrl, supabaseKey) : null;
 
 console.log(`[Supabase Link] Live DB configuration detected: ${isSupabaseLive}`);
@@ -80,6 +115,24 @@ async function verifyTable(tableName: string): Promise<boolean> {
 // -------------------------------------------------------------
 // Live APIs
 // -------------------------------------------------------------
+
+// Secure env variables check
+app.get("/api/test-env", (req, res) => {
+  const getBrief = (val: string | undefined) => {
+    if (!val) return "undefined/empty";
+    return `length: ${val.length}, starts with: ${val.substring(0, 5)}..., ends with: ...${val.substring(val.length - 5)}`;
+  };
+  res.json({
+    SUPABASE_URL: getBrief(process.env.SUPABASE_URL),
+    VITE_SUPABASE_URL: getBrief(process.env.VITE_SUPABASE_URL),
+    SUPABASE_ANON_KEY: getBrief(process.env.SUPABASE_ANON_KEY),
+    VITE_SUPABASE_ANON_KEY: getBrief(process.env.VITE_SUPABASE_ANON_KEY),
+    SUPABASE_SERVICE_ROLE_KEY: getBrief(process.env.SUPABASE_SERVICE_ROLE_KEY),
+    NODE_ENV: process.env.NODE_ENV,
+    isSupabaseLive: !!(process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)),
+    __SUPABASE_URL__global: getBrief((window as any)?.__SUPABASE_URL__),
+  });
+});
 
 // Config detection
 app.get("/api/supabase/config", (req, res) => {
@@ -525,8 +578,29 @@ app.post("/api/blocked-emails/set", async (req, res) => {
 
 
 // -------------------------------------------------------------
-// Dev & Production serving
+// Dev & Production serving with Dynamic Secrets Injection
 // -------------------------------------------------------------
+
+async function getInjectedHtml(htmlPath: string, viteInstance?: any, reqUrl: string = "/") {
+  let html = fs.readFileSync(htmlPath, "utf-8");
+  if (viteInstance) {
+    html = await viteInstance.transformIndexHtml(reqUrl, html);
+  }
+  
+  const clientUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
+  const clientKey = getValidKey(process.env.VITE_SUPABASE_ANON_KEY, process.env.SUPABASE_ANON_KEY);
+  
+  if (clientUrl && clientKey) {
+    const scriptTag = `
+<script id="supabase-injected-secrets">
+  window.__SUPABASE_URL__ = ${JSON.stringify(clientUrl)};
+  window.__SUPABASE_ANON_KEY__ = ${JSON.stringify(clientKey)};
+</script>
+`;
+    html = html.replace("</head>", `${scriptTag}</head>`);
+  }
+  return html;
+}
 
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
@@ -534,13 +608,46 @@ async function startServer() {
       server: { middlewareMode: true },
       appType: "spa"
     });
+
+    // Intercept requests for / and /index.html to inject credentials dynamically
+    app.get(["/", "/index.html"], async (req, res, next) => {
+      try {
+        const filePath = path.join(process.cwd(), "index.html");
+        if (fs.existsSync(filePath)) {
+          const html = await getInjectedHtml(filePath, vite, req.url);
+          res.setHeader("Content-Type", "text/html");
+          return res.send(html);
+        }
+        next();
+      } catch (err) {
+        next(err);
+      }
+    });
+
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+    
+    // Intercept wildcard request so that index.html is augmented with dynamic credentials
+    app.get("*", async (req, res, next) => {
+      // Direct asset requests should fallback to standard state
+      if (req.url.includes(".") && !req.url.endsWith(".html")) {
+        return next();
+      }
+      try {
+        const filePath = path.join(distPath, "index.html");
+        if (fs.existsSync(filePath)) {
+          const html = await getInjectedHtml(filePath, undefined, req.url);
+          res.setHeader("Content-Type", "text/html");
+          return res.send(html);
+        }
+        next();
+      } catch (err) {
+        next(err);
+      }
     });
+
+    app.use(express.static(distPath));
   }
 
   // Bind to port 3000 on host 0.0.0.0

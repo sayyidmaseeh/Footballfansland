@@ -1198,9 +1198,11 @@ export default function App() {
         throw new Error("Supabase is not configured yet. Live database is required for actions.");
       }
     } catch (err: any) {
+      console.error("Sign up failure details:", err);
+      const errDetails = `[Code: ${err.code || 'N/A'}, Status: ${err.status || 'N/A'}] ${err.message || 'An account with these parameters could not be constructed.'}`;
       setToast({
         message: "Sign Up Failure 🚫",
-        description: err.message || "An account with these parameters could not be constructed.",
+        description: errDetails,
         type: "error"
       });
     } finally {
@@ -1269,11 +1271,21 @@ export default function App() {
         throw new Error("Supabase is not configured yet. Live database is required for actions.");
       }
     } catch (err: any) {
-      setToast({
-        message: "Sign In Terminated 🚫",
-        description: err.message || "Credential verification failed. Please review inputs.",
-        type: "error"
-      });
+      console.error("Sign in failure details:", err);
+      if (err.message && err.message.includes("Email not confirmed")) {
+        setToast({
+          message: "Email Not Confirmed 📧",
+          description: "Please check your email inbox and click the verification link before logging in.",
+          type: "error"
+        });
+      } else {
+        const errDetails = `[Code: ${err.code || 'N/A'}, Status: ${err.status || 'N/A'}] ${err.message || 'Credential verification failed. Please review inputs.'}`;
+        setToast({
+          message: "Sign In Terminated 🚫",
+          description: errDetails,
+          type: "error"
+        });
+      }
     } finally {
       setIsAuthLoading(false);
     }
@@ -3362,7 +3374,10 @@ export default function App() {
     const syncWithSupabaseDatabase = async () => {
       try {
         // Run silent table check first to flag missing tables before fetches start
-        await dbVerifySchemasOnBoot();
+        const missingResult = await dbVerifySchemasOnBoot();
+        if (missingResult && missingResult.length > 0) {
+          setMissingTables(missingResult);
+        }
         fetchSupabaseBackendConfig();
 
         const [blockedList, usersList, cloudTiles] = await Promise.all([
@@ -5627,6 +5642,30 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
 
   return (
     <div className="relative w-full h-screen bg-[#0b0f19] text-white font-sans overflow-hidden select-none">
+      
+      {/* ⚠️ Database Schema Missing Warning Banner */}
+      {missingTables.length > 0 && (
+        <div id="missing-tables-warning-banner" className="absolute top-0 left-0 right-0 z-50 bg-amber-600 text-slate-950 px-4 py-3 flex flex-col md:flex-row items-center justify-between gap-3 text-center md:text-left text-xs font-bold shadow-2xl border-b border-amber-500 backdrop-blur-md">
+          <div className="flex items-center gap-2">
+            <span className="text-base">⚠️</span>
+            <span>
+              Database Connection Alert: Missing required tables ({missingTables.join(", ")}). The administrator needs to open the Admin Panel, navigate to Schema Diagnostics, and run the SQL setup script in the Supabase SQL Editor to restore full operation.
+            </span>
+          </div>
+          <button 
+            onClick={() => {
+              setToast({
+                message: "Run SQL Setup Script! 📋",
+                description: "Go to Admin Panel -> 'Database Configuration & Sync' -> Copy SQL setup schema to copy the layout commands.",
+                type: "warning"
+              });
+            }}
+            className="bg-slate-950 hover:bg-slate-900 text-amber-400 border border-amber-500/50 hover:border-amber-400 px-3.5 py-1.5 rounded-lg transition-colors text-[10px] uppercase tracking-wider whitespace-nowrap cursor-pointer"
+          >
+            Copy Setup Instructions 📑
+          </button>
+        </div>
+      )}
       
       {/* Dynamic Popup Notification Toast removed as requested */}
 
@@ -9741,7 +9780,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                                 <div className="relative">
                                   <pre className="bg-slate-950 p-3 rounded-xl border border-slate-850 font-mono text-[8px] text-slate-300 overflow-x-auto max-h-[140px] leading-relaxed block select-all cursor-pointer hover:border-slate-800 transition-colors"
                                     onClick={() => {
-                                      const sql = `-- Kerala Football Religion database setup script\n\n-- 1. Create registered profiles table\nCREATE TABLE IF NOT EXISTS public.users (\n  email text PRIMARY KEY,\n  username text NOT NULL,\n  favorite_club text DEFAULT 'None',\n  is_admin boolean DEFAULT false,\n  picture text DEFAULT '',\n  free_slots integer DEFAULT 3,\n  created_at timestamp with time zone DEFAULT now()\n);\nALTER TABLE public.users ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow public read users" ON public.users FOR SELECT USING (true);\nCREATE POLICY "Allow public write users" ON public.users FOR ALL USING (true);\n\n-- 2. Create Sector Tiles Table\nCREATE TABLE IF NOT EXISTS public.tiles (\n  id text PRIMARY KEY,\n  team text DEFAULT 'None',\n  photo text DEFAULT null,\n  claimed_by text DEFAULT null,\n  custom_text text DEFAULT null,\n  text_background_style text DEFAULT 'none',\n  image_border_style text DEFAULT 'none',\n  hyperlink text DEFAULT null,\n  merged_with text DEFAULT null,\n  is_merged_child boolean DEFAULT false,\n  merged_parent_id text DEFAULT null,\n  chats jsonb DEFAULT '[]'::jsonb,\n  last_claimed_at timestamp with time zone DEFAULT now()\n);\nALTER TABLE public.tiles ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow public read tiles" ON public.tiles FOR SELECT USING (true);\nCREATE POLICY "Allow public write tiles" ON public.tiles FOR ALL USING (true);\n\n-- 3. Create Activity Logs Table\nCREATE TABLE IF NOT EXISTS public.activity_logs (\n  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  username text DEFAULT 'Guest',\n  action_type text NOT NULL,\n  description text NOT NULL,\n  created_at timestamp with time zone DEFAULT now()\n);\nALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow public read logs" ON public.activity_logs FOR SELECT USING (true);\nCREATE POLICY "Allow public write logs" ON public.activity_logs FOR ALL USING (true);\n\n-- 4. Create Blocked User Email table\nCREATE TABLE IF NOT EXISTS public.blocked_user_emails (\n  email text PRIMARY KEY,\n  created_at timestamp with time zone DEFAULT now()\n);\nALTER TABLE public.blocked_user_emails ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow public read blocked_emails" ON public.blocked_user_emails FOR SELECT USING (true);\nCREATE POLICY "Allow public write blocked_emails" ON public.blocked_user_emails FOR ALL USING (true);`;
+                                      const sql = `-- Kerala Football Religion database setup script\n\n-- 1. Create registered profiles table\nCREATE TABLE IF NOT EXISTS public.users (\n  email text PRIMARY KEY,\n  username text NOT NULL,\n  favorite_club text DEFAULT 'None',\n  is_admin boolean DEFAULT false,\n  picture text DEFAULT '',\n  free_slots integer DEFAULT 3,\n  created_at timestamp with time zone DEFAULT now()\n);\nALTER TABLE public.users ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow public read users" ON public.users FOR SELECT USING (true);\nCREATE POLICY "Allow public write users" ON public.users FOR ALL USING (true);\n\n-- 2. Create Sector Tiles Table\nCREATE TABLE IF NOT EXISTS public.tiles (\n  id text PRIMARY KEY,\n  team text DEFAULT 'None',\n  photo text DEFAULT null,\n  claimed_by text DEFAULT null,\n  custom_text text DEFAULT null,\n  text_background_style text DEFAULT 'none',\n  image_border_style text DEFAULT 'none',\n  hyperlink text DEFAULT null,\n  merged_with text DEFAULT null,\n  is_merged_child boolean DEFAULT false,\n  merged_parent_id text DEFAULT null,\n  chats jsonb DEFAULT '[]'::jsonb,\n  last_claimed_at timestamp with time zone DEFAULT now()\n);\nALTER TABLE public.tiles ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow public read tiles" ON public.tiles FOR SELECT USING (true);\nCREATE POLICY "Allow public write tiles" ON public.tiles FOR ALL USING (true);\n\n-- 3. Create Activity Logs Table\nCREATE TABLE IF NOT EXISTS public.activity_logs (\n  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  username text DEFAULT 'Guest',\n  action_type text NOT NULL,\n  description text NOT NULL,\n  created_at timestamp with time zone DEFAULT now()\n);\nALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow public read logs" ON public.activity_logs FOR SELECT USING (true);\nCREATE POLICY "Allow public write logs" ON public.activity_logs FOR ALL USING (true);\n\n-- 4. Create Blocked User Email table\nCREATE TABLE IF NOT EXISTS public.blocked_user_emails (\n  email text PRIMARY KEY,\n  created_at timestamp with time zone DEFAULT now()\n);\nALTER TABLE public.blocked_user_emails ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow public read blocked_emails" ON public.blocked_user_emails FOR SELECT USING (true);\nCREATE POLICY "Allow public write blocked_emails" ON public.blocked_user_emails FOR ALL USING (true);\n\n-- 5. Automatically create a profile in public.users when a user signs up via Supabase Auth\nCREATE OR REPLACE FUNCTION public.handle_new_user()\nRETURNS trigger AS $$\nBEGIN\n  INSERT INTO public.users (email, username, favorite_club, is_admin, picture, free_slots)\n  VALUES (\n    new.email,\n    COALESCE(new.raw_user_meta_data->>'username', split_part(new.email, '@', 1)),\n    COALESCE(new.raw_user_meta_data->>'favorite_club', 'None'),\n    false,\n    COALESCE(new.raw_user_meta_data->>'picture', 'https://api.dicebear.com/7.x/pixel-art/svg?seed=' || COALESCE(new.raw_user_meta_data->>'username', split_part(new.email, '@', 1))),\n    3\n  )\n  ON CONFLICT (email) DO NOTHING;\n  RETURN new;\nEND;\n$$ LANGUAGE plpgsql SECURITY DEFINER;\n\nCREATE OR REPLACE TRIGGER on_auth_user_created\n  AFTER INSERT ON auth.users\n  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();`;
                                       navigator.clipboard.writeText(sql);
                                       setToast({
                                         message: "SQL Setup Script Copied! 📋",
