@@ -890,26 +890,13 @@ export default function App() {
     isAdmin?: boolean;
     picture?: string;
   }>(() => {
-    try {
-      const stored = localStorage.getItem('kerala_logged_in_user');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed && typeof parsed === 'object' && parsed.username) {
-          return parsed;
-        }
-      }
-    } catch {}
-    const defaultUser = {
+    return {
       username: 'Guest_Fan',
       email: 'guest@footballmap.com',
       favoriteClub: 'Argentina',
       isAdmin: false,
       picture: "https://api.dicebear.com/7.x/pixel-art/svg?seed=Guest"
     };
-    try {
-      localStorage.setItem('kerala_logged_in_user', JSON.stringify(defaultUser));
-    } catch {}
-    return defaultUser;
   });
 
   // Extended Super Admin & User Directory Persistence
@@ -921,22 +908,7 @@ export default function App() {
     isAdmin?: boolean;
     picture?: string;
     emailVerified?: boolean;
-  }[]>(() => {
-    try {
-      const stored = localStorage.getItem('kerala_registered_users_list_v4');
-      if (stored) return JSON.parse(stored);
-      // Seed default admin and users
-      const seeded = [
-        { username: 'SuperAdmin 👑', email: 'admin@footballmap.com', password: 'admin123', favoriteClub: 'None', isAdmin: true, freeSlots: 10 },
-        { username: 'Malabar_Maestro ⚽', email: 'maestro@kerala.in', password: 'user123', favoriteClub: 'Argentina', freeSlots: 3 },
-        { username: 'Kochi_Kingpin 👑', email: 'king@kerala.in', password: 'user123', favoriteClub: 'Brazil', freeSlots: 3 }
-      ];
-      localStorage.setItem('kerala_registered_users_list_v4', JSON.stringify(seeded));
-      return seeded;
-    } catch {
-      return [];
-    }
-  });
+  }[]>([]);
 
   const [blockedUserEmails, setBlockedUserEmails] = useState<string[]>(() => {
     try {
@@ -1077,8 +1049,13 @@ export default function App() {
           const profiles = await dbFetchUsers();
           const match = profiles.find((p) => p.email.toLowerCase() === email.toLowerCase());
           if (match) {
-            setLoggedInUser(match);
-            localStorage.setItem('kerala_logged_in_user', JSON.stringify(match));
+            setLoggedInUser({
+              username: match.username,
+              email: match.email,
+              favoriteClub: match.favoriteClub,
+              isAdmin: !!match.isAdmin,
+              picture: match.picture
+            });
           } else {
             const username = session.user.user_metadata?.username || `fan_${session.user.id.slice(0, 5)}`;
             const favoriteClub = session.user.user_metadata?.favorite_club || 'Argentina';
@@ -1086,12 +1063,11 @@ export default function App() {
               username,
               email,
               favoriteClub,
-              isAdmin: email.toLowerCase() === 'kingforstudy@gmail.com' || email.toLowerCase() === 'admin@footballmap.com',
+              isAdmin: false,
               picture: session.user.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${username}`
             };
             await dbUpsertUser(profile);
             setLoggedInUser(profile);
-            localStorage.setItem('kerala_logged_in_user', JSON.stringify(profile));
           }
         }
       }
@@ -1107,8 +1083,13 @@ export default function App() {
           const profiles = await dbFetchUsers();
           const match = profiles.find((p) => p.email.toLowerCase() === email.toLowerCase());
           if (match) {
-            setLoggedInUser(match);
-            localStorage.setItem('kerala_logged_in_user', JSON.stringify(match));
+            setLoggedInUser({
+              username: match.username,
+              email: match.email,
+              favoriteClub: match.favoriteClub,
+              isAdmin: !!match.isAdmin,
+              picture: match.picture
+            });
           } else {
             const username = session.user.user_metadata?.username || `fan_${session.user.id.slice(0, 5)}`;
             const favoriteClub = session.user.user_metadata?.favorite_club || 'Argentina';
@@ -1116,12 +1097,11 @@ export default function App() {
               username,
               email,
               favoriteClub,
-              isAdmin: email.toLowerCase() === 'kingforstudy@gmail.com' || email.toLowerCase() === 'admin@footballmap.com',
+              isAdmin: false,
               picture: session.user.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${username}`
             };
             await dbUpsertUser(profile);
             setLoggedInUser(profile);
-            localStorage.setItem('kerala_logged_in_user', JSON.stringify(profile));
           }
         }
       } else if (event === 'SIGNED_OUT') {
@@ -1133,7 +1113,6 @@ export default function App() {
           picture: "https://api.dicebear.com/7.x/pixel-art/svg?seed=Guest"
         };
         setLoggedInUser(defaultUser);
-        localStorage.setItem('kerala_logged_in_user', JSON.stringify(defaultUser));
       }
     });
 
@@ -1187,7 +1166,7 @@ export default function App() {
           username: loginUsername,
           email: loginEmail.toLowerCase(),
           favoriteClub: loginFavClub,
-          isAdmin: loginEmail.toLowerCase() === 'kingforstudy@gmail.com' || loginEmail.toLowerCase() === 'admin@footballmap.com',
+          isAdmin: false,
           picture: `https://api.dicebear.com/7.x/pixel-art/svg?seed=${loginUsername}`,
           freeSlots: 3,
           emailVerified
@@ -1208,7 +1187,6 @@ export default function App() {
         } else {
           // Instant confirmation (Confirmation turned OFF in Supabase)
           setLoggedInUser(newUserProfile);
-          localStorage.setItem('kerala_logged_in_user', JSON.stringify(newUserProfile));
           setShowLoginModal(false);
           setToast({
             message: "Account Activated! 🎉",
@@ -1217,33 +1195,7 @@ export default function App() {
           });
         }
       } else {
-        // Local sandbox fallback registration
-        const usersList = await dbFetchUsers();
-        if (usersList.some((usr) => usr.email.toLowerCase() === loginEmail.toLowerCase())) {
-          throw new Error("This email is already registered here in Sandbox directory.");
-        }
-
-        const newUserProfile = {
-          username: loginUsername,
-          email: loginEmail.toLowerCase(),
-          favoriteClub: loginFavClub,
-          isAdmin: loginEmail.toLowerCase() === 'kingforstudy@gmail.com' || loginEmail.toLowerCase() === 'admin@footballmap.com',
-          picture: `https://api.dicebear.com/7.x/pixel-art/svg?seed=${loginUsername}`,
-          freeSlots: 3,
-          emailVerified: true
-        };
-
-        const updated = [...usersList, newUserProfile];
-        localStorage.setItem('kerala_registered_users_list_v4', JSON.stringify(updated));
-        setLoggedInUser(newUserProfile);
-        localStorage.setItem('kerala_logged_in_user', JSON.stringify(newUserProfile));
-        setShowLoginModal(false);
-
-        setToast({
-          message: "Sandbox Account Spawned! 🎮",
-          description: "Instant access enabled! Real Supabase database can be linked anytime in Admin settings.",
-          type: "success"
-        });
+        throw new Error("Supabase is not configured yet. Live database is required for actions.");
       }
     } catch (err: any) {
       setToast({
@@ -1297,12 +1249,15 @@ export default function App() {
           username: data.user.user_metadata?.username || `fan_${data.user.id.slice(0, 5)}`,
           email: loginEmail.toLowerCase(),
           favoriteClub: data.user.user_metadata?.favorite_club || 'Argentina',
-          isAdmin: loginEmail.toLowerCase() === 'kingforstudy@gmail.com' || loginEmail.toLowerCase() === 'admin@footballmap.com',
+          isAdmin: false,
           picture: data.user.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${data.user.id.slice(0, 5)}`
         };
 
+        if (!match) {
+          await dbUpsertUser(matchedProfile);
+        }
+
         setLoggedInUser(matchedProfile);
-        localStorage.setItem('kerala_logged_in_user', JSON.stringify(matchedProfile));
         setShowLoginModal(false);
 
         setToast({
@@ -1311,22 +1266,7 @@ export default function App() {
           type: "success"
         });
       } else {
-        // Fallback local registry check
-        const usersList = await dbFetchUsers();
-        const match = usersList.find((u) => u.email.toLowerCase() === loginEmail.toLowerCase());
-        if (!match) {
-          throw new Error("No sandbox account matches this email. Register first!");
-        }
-
-        setLoggedInUser(match);
-        localStorage.setItem('kerala_logged_in_user', JSON.stringify(match));
-        setShowLoginModal(false);
-
-        setToast({
-          message: "Local Session Restored! 🎮",
-          description: `Access granted as ${match.username}. Sandbox mode.`,
-          type: "success"
-        });
+        throw new Error("Supabase is not configured yet. Live database is required for actions.");
       }
     } catch (err: any) {
       setToast({
@@ -1341,21 +1281,10 @@ export default function App() {
 
   const handleGoogleOAuthLogin = async () => {
     if (!isSupabaseConfigured || !supabase) {
-      // Sandbox model
-      const mockOAuth = {
-        username: 'Google_SuperAdmin 👑',
-        email: 'admin@google.com',
-        favoriteClub: 'Brazil',
-        isAdmin: true,
-        picture: "https://api.dicebear.com/7.x/pixel-art/svg?seed=GoogleAdmin"
-      };
-      setLoggedInUser(mockOAuth);
-      localStorage.setItem('kerala_logged_in_user', JSON.stringify(mockOAuth));
-      setShowLoginModal(false);
       setToast({
-        message: "Google OAuth Simulated! 🔑",
-        description: "Sandbox mode. Logged in instantly as Google Admin.",
-        type: "success"
+        message: "Google OAuth Error 🚫",
+        description: "Live database credentials are required for Google OAuth integration.",
+        type: "error"
       });
       return;
     }
@@ -1395,7 +1324,6 @@ export default function App() {
         picture: "https://api.dicebear.com/7.x/pixel-art/svg?seed=Guest"
       };
       setLoggedInUser(defaultUser);
-      localStorage.setItem('kerala_logged_in_user', JSON.stringify(defaultUser));
       
       setToast({
         message: "Signed Out Successfully 🛡️",
