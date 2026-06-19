@@ -1198,7 +1198,14 @@ export default function App() {
         throw new Error("Supabase is not configured yet. Live database is required for actions.");
       }
     } catch (err: any) {
-      console.error("Sign up failure details:", err);
+      console.error("Sign up failure details:", {
+        message: err?.message || "No error message specified",
+        status: err?.status || "N/A",
+        code: err?.code || "N/A",
+        name: err?.name || "Error",
+        stack: err?.stack || "N/A",
+        rawError: err
+      });
       const errDetails = `[Code: ${err.code || 'N/A'}, Status: ${err.status || 'N/A'}] ${err.message || 'An account with these parameters could not be constructed.'}`;
       setToast({
         message: "Sign Up Failure 🚫",
