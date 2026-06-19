@@ -62,6 +62,7 @@ import {
   isSupabaseOverridden,
   supabaseUrl,
   supabaseAnonKey,
+  supabase,
   setSupabaseOverrides,
   dbAddActivityLog,
   dbFetchActivityLogs,
@@ -660,13 +661,27 @@ export default function App() {
   const [missingBuckets, setMissingBuckets] = useState<string[]>([]);
   const [showFixSql, setShowFixSql] = useState(false);
   const [showRlsSql, setShowRlsSql] = useState(false);
+  const [supabaseBackendConfig, setSupabaseBackendConfig] = useState<any>(null);
+  const [isVerifyingSupabase, setIsVerifyingSupabase] = useState(false);
+
+  const fetchSupabaseBackendConfig = async () => {
+    try {
+      const res = await fetch("/api/supabase/config");
+      const data = await res.json();
+      setSupabaseBackendConfig(data);
+    } catch (e) {
+      console.warn("Failed fetching Supabase backend configuration state:", e);
+    }
+  };
 
   useEffect(() => {
     setMissingTables(getRegisteredMissingTables());
     setMissingBuckets(getRegisteredMissingBuckets());
+    fetchSupabaseBackendConfig();
     const handleUpdate = () => {
       setMissingTables(getRegisteredMissingTables());
       setMissingBuckets(getRegisteredMissingBuckets());
+      fetchSupabaseBackendConfig();
     };
     window.addEventListener('supabase_tables_updated', handleUpdate);
     return () => {
@@ -1034,20 +1049,365 @@ export default function App() {
   const [adminGiftSlotsValue, setAdminGiftSlotsValue] = useState<Record<string, string>>({});
   const [showMyTerritoriesModal, setShowMyTerritoriesModal] = useState(false);
 
-  // State variables for deleted sign up and login logic
-  const showLoginModal = false;
-  const setShowLoginModal = (val: boolean) => {};
-  const showVerificationPopup = false;
-  const setShowVerificationPopup = (val: boolean) => {};
-  const verificationEmail = '';
-  const loginEmail = '';
-  const loginUsername = '';
-  const loginPassword = '';
-  const loginFavClub = 'Argentina';
-  const isRegisterMode = false;
-  const setIsRegisterMode = (val: boolean) => {};
-  const showAuthPassword = false;
-  const isAuthLoading = false;
+  // Production-ready Sign Up and Login states with Live Supabase backend
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showVerificationPopup, setShowVerificationPopup] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState('');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginFavClub, setLoginFavClub] = useState<TeamChoice>('Argentina');
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+
+  // Monitor Supabase Auth session changes on mounting
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return;
+
+    // Retrieve active session during cold start
+    supabase.auth.getSession().then(async ({ data: { session }, error }) => {
+      if (error) {
+        console.warn("Error getting active Supabase session:", error);
+        return;
+      }
+      if (session?.user) {
+        const email = session.user.email;
+        if (email) {
+          const profiles = await dbFetchUsers();
+          const match = profiles.find((p) => p.email.toLowerCase() === email.toLowerCase());
+          if (match) {
+            setLoggedInUser(match);
+            localStorage.setItem('kerala_logged_in_user', JSON.stringify(match));
+          } else {
+            const username = session.user.user_metadata?.username || `fan_${session.user.id.slice(0, 5)}`;
+            const favoriteClub = session.user.user_metadata?.favorite_club || 'Argentina';
+            const profile = {
+              username,
+              email,
+              favoriteClub,
+              isAdmin: email.toLowerCase() === 'kingforstudy@gmail.com' || email.toLowerCase() === 'admin@footballmap.com',
+              picture: session.user.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${username}`
+            };
+            await dbUpsertUser(profile);
+            setLoggedInUser(profile);
+            localStorage.setItem('kerala_logged_in_user', JSON.stringify(profile));
+          }
+        }
+      }
+    }).catch(err => {
+      console.warn("Silent fallback - Supabase auth network issue detected during cold boot:", err);
+    });
+
+    // Subscribed triggers
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        const email = session.user.email;
+        if (email) {
+          const profiles = await dbFetchUsers();
+          const match = profiles.find((p) => p.email.toLowerCase() === email.toLowerCase());
+          if (match) {
+            setLoggedInUser(match);
+            localStorage.setItem('kerala_logged_in_user', JSON.stringify(match));
+          } else {
+            const username = session.user.user_metadata?.username || `fan_${session.user.id.slice(0, 5)}`;
+            const favoriteClub = session.user.user_metadata?.favorite_club || 'Argentina';
+            const profile = {
+              username,
+              email,
+              favoriteClub,
+              isAdmin: email.toLowerCase() === 'kingforstudy@gmail.com' || email.toLowerCase() === 'admin@footballmap.com',
+              picture: session.user.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${username}`
+            };
+            await dbUpsertUser(profile);
+            setLoggedInUser(profile);
+            localStorage.setItem('kerala_logged_in_user', JSON.stringify(profile));
+          }
+        }
+      } else if (event === 'SIGNED_OUT') {
+        const defaultUser = {
+          username: 'Guest_Fan',
+          email: 'guest@footballmap.com',
+          favoriteClub: 'Argentina',
+          isAdmin: false,
+          picture: "https://api.dicebear.com/7.x/pixel-art/svg?seed=Guest"
+        };
+        setLoggedInUser(defaultUser);
+        localStorage.setItem('kerala_logged_in_user', JSON.stringify(defaultUser));
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleAuthSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginEmail || !loginPassword || !loginUsername) {
+      setToast({
+        message: "Input Validation Mismatch ⚠️",
+        description: "Please supply a valid username, email structure, and security password.",
+        type: "error"
+      });
+      return;
+    }
+
+    try {
+      setIsAuthLoading(true);
+
+      // Block checks
+      const blocked = await dbFetchBlockedEmails();
+      if (blocked.includes(loginEmail.toLowerCase())) {
+        setToast({
+          message: "Registration Terminated 🚫",
+          description: "This email address is blacklisted by the system administrators.",
+          type: "error"
+        });
+        return;
+      }
+
+      if (isSupabaseConfigured && supabase) {
+        const { data, error } = await supabase.auth.signUp({
+          email: loginEmail,
+          password: loginPassword,
+          options: {
+            data: {
+              username: loginUsername,
+              favorite_club: loginFavClub
+            }
+          }
+        });
+
+        if (error) throw error;
+
+        // Sync local & live details
+        const emailVerified = !!(data.user && data.session);
+        const newUserProfile = {
+          username: loginUsername,
+          email: loginEmail.toLowerCase(),
+          favoriteClub: loginFavClub,
+          isAdmin: loginEmail.toLowerCase() === 'kingforstudy@gmail.com' || loginEmail.toLowerCase() === 'admin@footballmap.com',
+          picture: `https://api.dicebear.com/7.x/pixel-art/svg?seed=${loginUsername}`,
+          freeSlots: 3,
+          emailVerified
+        };
+
+        await dbUpsertUser(newUserProfile);
+
+        if (!emailVerified) {
+          // Verification Email dispatched
+          setVerificationEmail(loginEmail);
+          setShowVerificationPopup(true);
+          setShowLoginModal(false);
+          setToast({
+            message: "Verify Custom Profile! 📧",
+            description: `Verification link dispatched to ${loginEmail}. Please tap it to activate.`,
+            type: "success"
+          });
+        } else {
+          // Instant confirmation (Confirmation turned OFF in Supabase)
+          setLoggedInUser(newUserProfile);
+          localStorage.setItem('kerala_logged_in_user', JSON.stringify(newUserProfile));
+          setShowLoginModal(false);
+          setToast({
+            message: "Account Activated! 🎉",
+            description: `Welcome to Kerala Fan Club Map, ${loginUsername}! 3 claimant slots credited.`,
+            type: "success"
+          });
+        }
+      } else {
+        // Local sandbox fallback registration
+        const usersList = await dbFetchUsers();
+        if (usersList.some((usr) => usr.email.toLowerCase() === loginEmail.toLowerCase())) {
+          throw new Error("This email is already registered here in Sandbox directory.");
+        }
+
+        const newUserProfile = {
+          username: loginUsername,
+          email: loginEmail.toLowerCase(),
+          favoriteClub: loginFavClub,
+          isAdmin: loginEmail.toLowerCase() === 'kingforstudy@gmail.com' || loginEmail.toLowerCase() === 'admin@footballmap.com',
+          picture: `https://api.dicebear.com/7.x/pixel-art/svg?seed=${loginUsername}`,
+          freeSlots: 3,
+          emailVerified: true
+        };
+
+        const updated = [...usersList, newUserProfile];
+        localStorage.setItem('kerala_registered_users_list_v4', JSON.stringify(updated));
+        setLoggedInUser(newUserProfile);
+        localStorage.setItem('kerala_logged_in_user', JSON.stringify(newUserProfile));
+        setShowLoginModal(false);
+
+        setToast({
+          message: "Sandbox Account Spawned! 🎮",
+          description: "Instant access enabled! Real Supabase database can be linked anytime in Admin settings.",
+          type: "success"
+        });
+      }
+    } catch (err: any) {
+      setToast({
+        message: "Sign Up Failure 🚫",
+        description: err.message || "An account with these parameters could not be constructed.",
+        type: "error"
+      });
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleAuthSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginEmail || !loginPassword) {
+      setToast({
+        message: "Incomplete Parameters ⚠️",
+        description: "Specify both account email and secret password.",
+        type: "error"
+      });
+      return;
+    }
+
+    try {
+      setIsAuthLoading(true);
+
+      // Block checks
+      const blocked = await dbFetchBlockedEmails();
+      if (blocked.includes(loginEmail.toLowerCase())) {
+        setToast({
+          message: "Access Blacklisted 🚫",
+          description: "This email address is currently blocked from access.",
+          type: "error"
+        });
+        return;
+      }
+
+      if (isSupabaseConfigured && supabase) {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: loginEmail,
+          password: loginPassword
+        });
+
+        if (error) throw error;
+
+        // Fetch matched user details from remote records
+        const profiles = await dbFetchUsers();
+        const match = profiles.find((p) => p.email.toLowerCase() === loginEmail.toLowerCase());
+
+        const matchedProfile = match || {
+          username: data.user.user_metadata?.username || `fan_${data.user.id.slice(0, 5)}`,
+          email: loginEmail.toLowerCase(),
+          favoriteClub: data.user.user_metadata?.favorite_club || 'Argentina',
+          isAdmin: loginEmail.toLowerCase() === 'kingforstudy@gmail.com' || loginEmail.toLowerCase() === 'admin@footballmap.com',
+          picture: data.user.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${data.user.id.slice(0, 5)}`
+        };
+
+        setLoggedInUser(matchedProfile);
+        localStorage.setItem('kerala_logged_in_user', JSON.stringify(matchedProfile));
+        setShowLoginModal(false);
+
+        setToast({
+          message: "Authenticated Successfully 🛡️",
+          description: `Welcome back, ${matchedProfile.username}! Syncing server grids.`,
+          type: "success"
+        });
+      } else {
+        // Fallback local registry check
+        const usersList = await dbFetchUsers();
+        const match = usersList.find((u) => u.email.toLowerCase() === loginEmail.toLowerCase());
+        if (!match) {
+          throw new Error("No sandbox account matches this email. Register first!");
+        }
+
+        setLoggedInUser(match);
+        localStorage.setItem('kerala_logged_in_user', JSON.stringify(match));
+        setShowLoginModal(false);
+
+        setToast({
+          message: "Local Session Restored! 🎮",
+          description: `Access granted as ${match.username}. Sandbox mode.`,
+          type: "success"
+        });
+      }
+    } catch (err: any) {
+      setToast({
+        message: "Sign In Terminated 🚫",
+        description: err.message || "Credential verification failed. Please review inputs.",
+        type: "error"
+      });
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleGoogleOAuthLogin = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      // Sandbox model
+      const mockOAuth = {
+        username: 'Google_SuperAdmin 👑',
+        email: 'admin@google.com',
+        favoriteClub: 'Brazil',
+        isAdmin: true,
+        picture: "https://api.dicebear.com/7.x/pixel-art/svg?seed=GoogleAdmin"
+      };
+      setLoggedInUser(mockOAuth);
+      localStorage.setItem('kerala_logged_in_user', JSON.stringify(mockOAuth));
+      setShowLoginModal(false);
+      setToast({
+        message: "Google OAuth Simulated! 🔑",
+        description: "Sandbox mode. Logged in instantly as Google Admin.",
+        type: "success"
+      });
+      return;
+    }
+
+    try {
+      setIsAuthLoading(true);
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin
+        }
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      setToast({
+        message: "OAuth Callback Error 🚫",
+        description: err.message || "Failed to launch Supabase Google credentials portal.",
+        type: "error"
+      });
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleAuthSignOut = async () => {
+    try {
+      setIsAuthLoading(true);
+      if (isSupabaseConfigured && supabase) {
+        await dbSignOut();
+      }
+      
+      const defaultUser = {
+        username: 'Guest_Fan',
+        email: 'guest@footballmap.com',
+        favoriteClub: 'Argentina',
+        isAdmin: false,
+        picture: "https://api.dicebear.com/7.x/pixel-art/svg?seed=Guest"
+      };
+      setLoggedInUser(defaultUser);
+      localStorage.setItem('kerala_logged_in_user', JSON.stringify(defaultUser));
+      
+      setToast({
+        message: "Signed Out Successfully 🛡️",
+        description: "Your live session is secure and has been terminated.",
+        type: "success"
+      });
+    } catch (err: any) {
+      console.warn("Sign out issue:", err);
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
 
   const [showDbConfig, setShowDbConfig] = useState(false);
   const [testSmtpEmail, setTestSmtpEmail] = useState('kingforstudy@gmail.com');
@@ -3075,6 +3435,7 @@ export default function App() {
       try {
         // Run silent table check first to flag missing tables before fetches start
         await dbVerifySchemasOnBoot();
+        fetchSupabaseBackendConfig();
 
         const [blockedList, usersList, cloudTiles] = await Promise.all([
           dbFetchBlockedEmails().catch(err => {
@@ -5416,30 +5777,51 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
 
 
               {loggedInUser && (
-                <div 
-                  className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 px-2 py-1 rounded-xl shrink-0 animate-fade-in"
-                >
-                  <div className="text-right flex items-center gap-2">
-                    <div>
-                      <input
-                        type="text"
-                        value={loggedInUser.username}
-                        onChange={(e) => {
-                          const nextUsername = e.target.value.slice(0, 20) || 'Guest_Fan';
-                          const updated = { ...loggedInUser, username: nextUsername };
-                          setLoggedInUser(updated);
-                          localStorage.setItem('kerala_logged_in_user', JSON.stringify(updated));
-                        }}
-                        className="text-[9px] font-bold text-slate-200 leading-none bg-slate-950 border border-slate-800 px-1 py-0.5 rounded focus:outline-none focus:border-amber-500 w-[80px]"
-                        title="Edit fan nickname"
-                        placeholder="NICKNAME"
-                      />
-                      <div className="text-[8px] text-teal-400 font-mono leading-none mt-1 font-bold uppercase font-semibold text-left pl-1">
-                        {parseFloat(freeSlots.toFixed(2))} Slots
+                loggedInUser.email === 'guest@footballmap.com' ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginModal(true)}
+                    className="px-3 py-1.5 bg-gradient-to-tr from-teal-500 to-emerald-500 hover:from-teal-450 hover:to-emerald-450 text-slate-950 text-[10px] font-extrabold uppercase rounded-xl shadow-md cursor-pointer transition-all flex items-center gap-1 shrink-0 animate-fade-in"
+                    id="trigger-login-modal-btn"
+                  >
+                    <LogIn className="w-3.5 h-3.5 shrink-0" />
+                    <span>Join Club</span>
+                  </button>
+                ) : (
+                  <div 
+                    className="flex items-center gap-2 bg-slate-900/90 border border-slate-800 px-2 py-1 rounded-xl shrink-0 animate-fade-in"
+                  >
+                    <div className="text-right flex items-center gap-2">
+                      <div>
+                        <input
+                          type="text"
+                          value={loggedInUser.username}
+                          onChange={(e) => {
+                            const nextUsername = e.target.value.slice(0, 20) || 'Guest_Fan';
+                            const updated = { ...loggedInUser, username: nextUsername };
+                            setLoggedInUser(updated);
+                            localStorage.setItem('kerala_logged_in_user', JSON.stringify(updated));
+                          }}
+                          className="text-[9px] font-bold text-slate-200 leading-none bg-slate-950 border border-slate-850 px-1 py-0.5 rounded focus:outline-none focus:border-amber-500 w-[70px]"
+                          title="Edit fan nickname"
+                          placeholder="NICKNAME"
+                        />
+                        <div className="text-[8px] text-teal-400 font-mono leading-none mt-1 font-bold uppercase font-semibold text-left pl-1">
+                          {parseFloat(freeSlots.toFixed(2))} Slots
+                        </div>
                       </div>
                     </div>
+                    <button
+                      type="button"
+                      onClick={handleAuthSignOut}
+                      className="p-1 rounded-lg bg-slate-950 hover:bg-slate-850 text-slate-450 hover:text-red-400 border border-slate-800 transition-colors cursor-pointer shrink-0"
+                      title="Sign out of your Supabase profile"
+                      id="header-sign-out-btn"
+                    >
+                      <LogOut className="w-3 h-3" />
+                    </button>
                   </div>
-                </div>
+                )
               )}
             </div>
           </div>
@@ -9305,11 +9687,405 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                           </div>
                         </div>
 
+                        {/* Supabase Core Connection, Diagnostics & Table Migrator */}
+                        <div className="p-4 bg-slate-955 rounded-xl border border-slate-850/80 space-y-4 text-left">
+                          <div>
+                            <span className="text-[10px] font-mono font-extrabold uppercase tracking-widest text-[#38bdf8] block mb-1">🗄️ Supabase Cloud & Persistence Hub</span>
+                            <h5 className="text-xs font-bold text-white flex items-center gap-1.5">
+                              Real-Time Synchronization Status
+                              {supabaseBackendConfig?.suspended && <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />}
+                              {!supabaseBackendConfig?.suspended && (missingTables.length > 0 || missingBuckets.length > 0) && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />}
+                            </h5>
+                            <p className="text-[10px] text-slate-400 leading-normal mt-0.5">
+                              This application runs on a dual-state auto-healing architecture. If a real Supabase database connection fails, is unconfigured, or is missing required tables, the backend automatically and silently falls back to server memory emulation to maintain 100% features sandbox stability.
+                            </p>
+                          </div>
+
+                          {/* Dynamic Connection Status Widget */}
+                          <div className="space-y-2.5">
+                            <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-wider block">Connection Environment Status</span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
+                              {/* Left status panel */}
+                              <div className="bg-slate-950 p-3 rounded-xl border border-slate-850 space-y-1 bg-gradient-to-br from-slate-950 to-slate-900 overflow-hidden">
+                                <span className="text-[8px] font-mono text-slate-500 uppercase font-black block">Integration Mode:</span>
+                                <div className="flex items-center gap-1.5">
+                                  {!(supabaseBackendConfig?.configured) ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-400">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                      Local Sandbox Mode
+                                    </span>
+                                  ) : supabaseBackendConfig?.suspended ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-400">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                                      Disconnected / Suspended
+                                    </span>
+                                  ) : (missingTables.length > 0 || missingBuckets.length > 0) ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-400 animate-pulse">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                      Schema Requirements Missing
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                      Live Cloud Connected
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[9px] font-mono text-slate-400 leading-relaxed pt-0.5">
+                                  {supabaseBackendConfig?.mode || "Local Server Memory Emulation"}
+                                </p>
+                              </div>
+
+                              {/* Right status panel */}
+                              <div className="bg-slate-950 p-3 rounded-xl border border-slate-850 space-y-1 bg-gradient-to-br from-slate-950 to-slate-900 overflow-hidden">
+                                <span className="text-[8px] font-mono text-slate-500 uppercase font-black block">Database Endpoint:</span>
+                                <span className="text-[9.5px] font-mono text-slate-300 break-all select-all block pt-0.5">
+                                  {supabaseBackendConfig?.url || "kerala-football-emulator-dev"}
+                                </span>
+                                <span className="text-[8.5px] font-mono block">
+                                  {supabaseBackendConfig?.suspended ? (
+                                    <strong className="text-red-400">Suspended: {supabaseBackendConfig.suspensionReason}</strong>
+                                  ) : (
+                                    <strong className="text-emerald-400">All queries routed safely</strong>
+                                  )}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Show DB Connection Error if active */}
+                            {supabaseBackendConfig?.lastError && (
+                              <div className="bg-red-955/20 border border-red-900/30 p-2.5 rounded-xl text-[9.5px] font-mono text-red-300 flex flex-col gap-1 leading-normal text-left">
+                                <strong className="text-red-400 uppercase font-extrabold text-[8px] tracking-wider block">⚠️ Active Backend Connection Warning:</strong>
+                                <p className="leading-snug">{supabaseBackendConfig.lastError}</p>
+                              </div>
+                            )}
+
+                            {/* Tables & Buckets Status checklist */}
+                            {supabaseBackendConfig?.configured && (
+                              <div className="p-3 bg-slate-950 rounded-xl border border-slate-850 text-left space-y-2">
+                                <span className="text-[8.5px] font-mono font-bold text-slate-400 uppercase tracking-wider block border-b border-slate-900 pb-1 mb-1 font-semibold">📋 Schema Consistency Diagnostics Check</span>
+                                
+                                <div className="space-y-1.5 text-[9.5px] font-mono">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-slate-450">Target Tables Check:</span>
+                                    <span className={missingTables.length === 0 ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>
+                                      {missingTables.length === 0 ? "All 4 Tables Verified ✅" : `${4 - missingTables.length}/4 Tables Active ⚠️`}
+                                    </span>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 pt-1 pl-1 text-[9px]">
+                                    <div className="flex items-center gap-1">
+                                      <span className={`w-1.5 h-1.5 rounded-full ${missingTables.includes("tiles") ? "bg-red-500" : "bg-emerald-500"}`} />
+                                      <span className={missingTables.includes("tiles") ? "text-slate-500 line-through" : "text-slate-300"}>public.tiles</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span className={`w-1.5 h-1.5 rounded-full ${missingTables.includes("users") ? "bg-red-500" : "bg-emerald-500"}`} />
+                                      <span className={missingTables.includes("users") ? "text-slate-500 line-through" : "text-slate-300"}>public.users</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span className={`w-1.5 h-1.5 rounded-full ${missingTables.includes("activity_logs") ? "bg-red-500" : "bg-emerald-500"}`} />
+                                      <span className={missingTables.includes("activity_logs") ? "text-slate-500 line-through" : "text-slate-300"}>public.activity_logs</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span className={`w-1.5 h-1.5 rounded-full ${missingTables.includes("blocked_user_emails") ? "bg-red-500" : "bg-emerald-500"}`} />
+                                      <span className={missingTables.includes("blocked_user_emails") ? "text-slate-500 line-through" : "text-slate-300"}>public.blocked_user_emails</span>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center justify-between pt-1 border-t border-slate-900 mt-1">
+                                    <span className="text-slate-450">Media Bucket Check:</span>
+                                    <span className={missingBuckets.includes("tile-photos") ? "text-amber-400 font-bold" : "text-emerald-400 font-bold"}>
+                                      {missingBuckets.includes("tile-photos") ? "Missing (tile-photos) ⚠️" : "Available (tile-photos) ✅"}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* SQL Setup copy paste generator block */}
+                            {(missingTables.length > 0 || !supabaseBackendConfig?.configured) && (
+                              <div className="space-y-1.5">
+                                <span className="text-[9px] font-mono font-bold text-amber-400 uppercase tracking-wider block">⚡ Supabase SQL Migration Script Generator</span>
+                                <p className="text-[9.5px] text-slate-450 leading-normal">
+                                  Run this script inside your <strong className="text-white font-normal">Supabase SQL Editor</strong> to database tables, register profiles, and apply policies.
+                                </p>
+
+                                <div className="relative">
+                                  <pre className="bg-slate-950 p-3 rounded-xl border border-slate-850 font-mono text-[8px] text-slate-300 overflow-x-auto max-h-[140px] leading-relaxed block select-all cursor-pointer hover:border-slate-800 transition-colors"
+                                    onClick={() => {
+                                      const sql = `-- Kerala Football Religion database setup script\n\n-- 1. Create registered profiles table\nCREATE TABLE IF NOT EXISTS public.users (\n  email text PRIMARY KEY,\n  username text NOT NULL,\n  favorite_club text DEFAULT 'None',\n  is_admin boolean DEFAULT false,\n  picture text DEFAULT '',\n  free_slots integer DEFAULT 3,\n  created_at timestamp with time zone DEFAULT now()\n);\nALTER TABLE public.users ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow public read users" ON public.users FOR SELECT USING (true);\nCREATE POLICY "Allow public write users" ON public.users FOR ALL USING (true);\n\n-- 2. Create Sector Tiles Table\nCREATE TABLE IF NOT EXISTS public.tiles (\n  id text PRIMARY KEY,\n  team text DEFAULT 'None',\n  photo text DEFAULT null,\n  claimed_by text DEFAULT null,\n  custom_text text DEFAULT null,\n  text_background_style text DEFAULT 'none',\n  image_border_style text DEFAULT 'none',\n  hyperlink text DEFAULT null,\n  merged_with text DEFAULT null,\n  is_merged_child boolean DEFAULT false,\n  merged_parent_id text DEFAULT null,\n  chats jsonb DEFAULT '[]'::jsonb,\n  last_claimed_at timestamp with time zone DEFAULT now()\n);\nALTER TABLE public.tiles ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow public read tiles" ON public.tiles FOR SELECT USING (true);\nCREATE POLICY "Allow public write tiles" ON public.tiles FOR ALL USING (true);\n\n-- 3. Create Activity Logs Table\nCREATE TABLE IF NOT EXISTS public.activity_logs (\n  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  username text DEFAULT 'Guest',\n  action_type text NOT NULL,\n  description text NOT NULL,\n  created_at timestamp with time zone DEFAULT now()\n);\nALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow public read logs" ON public.activity_logs FOR SELECT USING (true);\nCREATE POLICY "Allow public write logs" ON public.activity_logs FOR ALL USING (true);\n\n-- 4. Create Blocked User Email table\nCREATE TABLE IF NOT EXISTS public.blocked_user_emails (\n  email text PRIMARY KEY,\n  created_at timestamp with time zone DEFAULT now()\n);\nALTER TABLE public.blocked_user_emails ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow public read blocked_emails" ON public.blocked_user_emails FOR SELECT USING (true);\nCREATE POLICY "Allow public write blocked_emails" ON public.blocked_user_emails FOR ALL USING (true);`;
+                                      navigator.clipboard.writeText(sql);
+                                      setToast({
+                                        message: "SQL Setup Script Copied! 📋",
+                                        description: "Ready to run inside your Supabase project's SQL Editor console.",
+                                        type: "success"
+                                      });
+                                    }}
+                                  >
+                                    {`-- Create Kerala Grid Football setup schema\n\nCREATE TABLE IF NOT EXISTS public.users (\n  email text PRIMARY KEY,\n  username text NOT NULL,\n  favorite_club text DEFAULT 'None',\n  is_admin boolean DEFAULT false,\n  picture text DEFAULT '',\n  free_slots integer DEFAULT 3\n);\n\nCREATE TABLE IF NOT EXISTS public.tiles (\n  id text PRIMARY KEY,\n  team text DEFAULT 'None',\n  photo text DEFAULT null,\n  claimed_by text DEFAULT null\n);\n\n-- [Click anywhere to copy the fully expanded SQL script]`}
+                                  </pre>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Interactive Diagnostics Trigger Handshake */}
+                            <div className="flex gap-2 pt-1.5 border-t border-slate-850/60 items-center justify-between">
+                              <span className="text-[9.5px] text-slate-500 font-mono">Verify and fetch live schema statuses</span>
+                              <button
+                                type="button"
+                                disabled={isVerifyingSupabase}
+                                onClick={async () => {
+                                  setIsVerifyingSupabase(true);
+                                  try {
+                                    // Run schema verify boot check
+                                    const missing = await dbVerifySchemasOnBoot();
+                                    await fetchSupabaseBackendConfig();
+
+                                    if (missing.length === 0) {
+                                      setToast({
+                                        message: "All Systems Operational! 🚀✅",
+                                        description: "Database connection successful and all 4 tables perfectly synchronized.",
+                                        type: "success"
+                                      });
+                                    } else {
+                                      setToast({
+                                        message: "Diagnostics Handshake Complete! 📟⚠️",
+                                        description: `Successfully checked database. Missing ${missing.length} schemas in current Supabase workspace. Run SQL script to fix.`,
+                                        type: "warning"
+                                      });
+                                    }
+                                  } catch (err: any) {
+                                    setToast({
+                                      message: "Connection Handshake Failed ❌",
+                                      description: err.message || "Failed communicating with full-stack analytics backend.",
+                                      type: "error"
+                                    });
+                                  } finally {
+                                    setIsVerifyingSupabase(false);
+                                  }
+                                }}
+                                className="bg-[#38bdf8] hover:bg-sky-400 text-slate-950 font-extrabold uppercase px-3.5 py-1.5 rounded-lg text-[9.5px] tracking-wide cursor-pointer transition-colors disabled:opacity-40"
+                              >
+                                {isVerifyingSupabase ? "Refreshing Handshake..." : "Validate Sync & Schema ⚡"}
+                              </button>
+                            </div>
+
+                          </div>
+                        </div>
+
                       </div>
                     </div>
                   </div>
                 )}
 
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Production-Level Authenticators: Login / Register Modal */}
+      <AnimatePresence>
+        {showLoginModal && (
+          <div className="absolute inset-0 z-[110] flex items-center justify-center bg-slate-950/80 backdrop-blur-md px-4">
+            {/* Click mask to close */}
+            <div className="absolute inset-0 cursor-pointer" onClick={() => setShowLoginModal(false)} />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative w-full max-w-sm bg-slate-950/95 border border-slate-800/80 rounded-2xl p-6 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] overflow-hidden z-10"
+              id="supabase-auth-modal"
+            >
+              {/* Decorative backgrounds */}
+              <div className="absolute -top-12 -left-12 w-28 h-28 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
+              <div className="absolute -bottom-12 -right-12 w-28 h-28 bg-teal-500/5 rounded-full blur-2xl pointer-events-none" />
+
+              <button
+                type="button"
+                onClick={() => setShowLoginModal(false)}
+                className="absolute right-4 top-4 p-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-850 text-slate-400 hover:text-white cursor-pointer transition-colors border border-slate-800/50"
+                id="close-login-modal-btn"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="text-center mb-5 relative z-10">
+                <span className="inline-flex p-2 rounded-xl bg-gradient-to-tr from-amber-500/10 to-amber-500/20 border border-amber-500/20 mb-2.5 shadow-inner">
+                  <Shield className="w-5 h-5 text-amber-400 animate-pulse" />
+                </span>
+                <h3 className="text-sm font-black text-white uppercase tracking-wider font-sans">
+                  {isRegisterMode ? "Create Fan Account ⚽" : "Sign In Fan Club 🔐"}
+                </h3>
+                <p className="text-[10px] font-mono text-slate-400 mt-1 uppercase tracking-wide">
+                  {isRegisterMode ? "Join 242,827 territorial grid claims" : "Unlock custom tile overlays & live chatting"}
+                </p>
+              </div>
+
+              {/* Toggle tabs */}
+              <div className="flex bg-slate-900/50 border border-slate-900 rounded-xl p-1 mb-4 relative z-10 font-mono text-[10px] uppercase font-bold text-center">
+                <button
+                  onClick={() => setIsRegisterMode(false)}
+                  className={`flex-1 py-1.5 rounded-lg transition-all ${!isRegisterMode ? 'bg-slate-800 text-amber-400 shadow' : 'text-slate-400 hover:text-slate-300'}`}
+                >
+                  Sign In
+                </button>
+                <button
+                  onClick={() => setIsRegisterMode(true)}
+                  className={`flex-1 py-1.5 rounded-lg transition-all ${isRegisterMode ? 'bg-slate-800 text-amber-400 shadow' : 'text-slate-400 hover:text-slate-300'}`}
+                >
+                  Register
+                </button>
+              </div>
+
+              {/* Form Content */}
+              <form onSubmit={isRegisterMode ? handleAuthSignUp : handleAuthSignIn} className="flex flex-col gap-3 relative z-10">
+                {isRegisterMode && (
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[9px] font-mono font-bold uppercase tracking-wider text-slate-400 pl-1">Choose Username</label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                      <input
+                        type="text"
+                        required
+                        value={loginUsername}
+                        onChange={(e) => setLoginUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 18))}
+                        placeholder="e.g. Malabar_Striker"
+                        className="w-full bg-slate-900/80 border border-slate-800 focus:border-amber-500 focus:outline-none pl-9 pr-4 py-2 text-xs text-white rounded-xl placeholder:text-slate-600 transition-colors"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[9px] font-mono font-bold uppercase tracking-wider text-slate-400 pl-1">Email Address</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                    <input
+                      type="email"
+                      required
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      placeholder="name@gmail.com"
+                      className="w-full bg-slate-900/80 border border-slate-800 focus:border-amber-500 focus:outline-none pl-9 pr-4 py-2 text-xs text-white rounded-xl placeholder:text-slate-600 transition-colors"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[9px] font-mono font-bold uppercase tracking-wider text-slate-400 pl-1">Secret Password</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                    <input
+                      type={showAuthPassword ? "text" : "password"}
+                      required
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-slate-900/80 border border-slate-800 focus:border-amber-500 focus:outline-none pl-9 pr-10 py-2 text-xs text-white rounded-xl placeholder:text-slate-600 transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAuthPassword(!showAuthPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-350 cursor-pointer"
+                    >
+                      {showAuthPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isAuthLoading}
+                  className="w-full py-2.5 mt-2 bg-gradient-to-tr from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 disabled:opacity-40 text-slate-950 rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer shadow-md shadow-amber-500/5 active:scale-[0.99] transition-all flex items-center justify-center gap-1.5"
+                  id="submit-auth-form-btn"
+                >
+                  {isAuthLoading ? (
+                    <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      {isRegisterMode ? <User className="w-4 h-4 shrink-0" /> : <LogIn className="w-4 h-4 shrink-0" />}
+                      <span>{isRegisterMode ? "Create Account & Start Grid" : "Secure Log In"}</span>
+                    </>
+                  )}
+                </button>
+              </form>
+
+              {/* Divider lines */}
+              <div className="relative my-4 z-10 text-center">
+                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-slate-850/60" />
+                <span className="text-[8px] font-mono text-slate-400 uppercase tracking-wide px-2 bg-slate-950 h-4 inline-block font-bold">
+                  Alternative entry
+                </span>
+              </div>
+
+              {/* Google OAuth Access */}
+              <button
+                type="button"
+                onClick={handleGoogleOAuthLogin}
+                className="w-full py-2 px-3 border border-slate-850 hover:border-slate-800 hover:bg-slate-900/50 text-slate-350 hover:text-white rounded-xl text-[10px] font-bold uppercase cursor-pointer flex items-center justify-center gap-2 transition-all relative z-10"
+                id="social-google-oauth-btn"
+              >
+                <svg className="w-3.5 h-3.5 text-red-500" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12.24 10.285V13.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l2.427-2.334C17.955 2.192 15.34 1 12.24 1 6.033 1 1 6.033 1 12.24s5.033 11.24 11.24 11.24c6.478 0 10.793-4.537 10.793-10.984 0-.742-.08-1.302-.177-1.851H12.24z"/>
+                </svg>
+                <span>Continue with Google</span>
+              </button>
+
+              {!isSupabaseConfigured && (
+                <div className="mt-4 p-2.5 bg-indigo-950/20 border border-indigo-900/35 rounded-xl text-[9px] font-mono text-indigo-305 leading-relaxed relative z-10 text-center animate-fade-in">
+                  🎮 <strong>Local Sandbox Mode Active</strong>: Link real Supabase keys inside Admin credentials to go live with authentic cloud persistence.
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Production-Level Authenticator: Verification Waiting Drawer */}
+      <AnimatePresence>
+        {showVerificationPopup && (
+          <div className="absolute inset-0 z-[120] flex items-center justify-center bg-slate-950/80 backdrop-blur-md px-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-sm bg-slate-950/95 border border-slate-800/80 rounded-2xl p-6 shadow-2xl relative z-10 text-center"
+              id="verification-waiting-popup"
+            >
+              <div className="absolute -top-12 -left-12 w-28 h-28 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none" />
+
+              <span className="inline-flex p-3 rounded-2xl bg-gradient-to-tr from-emerald-500/10 to-teal-500/20 border border-emerald-500/20 mb-4 shadow-inner">
+                <Mail className="w-6 h-6 text-emerald-400 animate-pulse" />
+              </span>
+
+              <h3 className="text-sm font-black text-white uppercase tracking-wider font-sans mb-1">
+                Confirm your Email! 📧
+              </h3>
+              <p className="text-[10.5px] font-mono text-slate-400 max-w-xs mx-auto leading-relaxed">
+                We've relayed an activation link to <strong className="text-emerald-400">{verificationEmail}</strong>. Please tap that email to secure your profile and unlock full quadrant rights.
+              </p>
+
+              <div className="mt-5 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowVerificationPopup(false);
+                    setShowLoginModal(true);
+                  }}
+                  className="w-full py-2 bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-350 hover:text-white rounded-xl text-[10px] font-bold uppercase transition-all cursor-pointer"
+                >
+                  Return to Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowVerificationPopup(false)}
+                  className="w-full py-2 text-slate-500 hover:text-slate-400 text-[9px] font-mono uppercase tracking-wide cursor-pointer"
+                >
+                  Dismiss Indicator
+                </button>
               </div>
             </motion.div>
           </div>
