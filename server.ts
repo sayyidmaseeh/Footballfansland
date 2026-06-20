@@ -167,17 +167,7 @@ app.get("/api/supabase/verify", async (req, res) => {
     }
   }
 
-  const missingBuckets: string[] = [];
-  try {
-    const { error } = await supabase.storage.getBucket("tile-photos");
-    if (error) {
-      inspectErrorAndSuspend(error);
-      missingBuckets.push("tile-photos");
-    }
-  } catch (err) {
-    inspectErrorAndSuspend(err);
-    missingBuckets.push("tile-photos");
-  }
+   const missingBuckets: string[] = []; // Storage is managed completely by Cloudflare R2
 
   res.json({
     configured: !supabaseSuspended,
@@ -512,6 +502,37 @@ app.post("/api/activity-logs/add", async (req, res) => {
     console.log("[Supabase Status] Handled action log addition fallback:", err.message);
     res.json({ success: false, error: err.message, source: "memory" });
   }
+});
+
+// POST Image Upload to Cloudflare R2 Mock (Local Dev Fallback)
+app.post("/api/upload", (req, res) => {
+  const { file, filename, folder } = req.body;
+  
+  if (!file || !filename) {
+    return res.status(400).json({ success: false, error: "Missing required file base64 data" });
+  }
+
+  console.log(`[Dev Server R2 Upload Simulation] Processed compressed file: ${filename} (bucket folder: ${folder})`);
+  
+  // Return the base64 string directly as the public URL. This is a robust dev simulation
+  // that instantly displays the uploaded compressed element on the game board in AI Studio!
+  res.json({
+    success: true,
+    url: file,
+    filename: filename,
+    simulated: true
+  });
+});
+
+// POST Delete Image from Cloudflare R2 Mock (Local Dev Fallback)
+app.post("/api/delete-image", (req, res) => {
+  const { url, filename } = req.body;
+  console.log(`[Dev Server R2 Delete Simulation] Processing deletion for url: ${url || "not specified"}, filename: ${filename || "not specified"}`);
+  res.json({
+    success: true,
+    message: "Simulated deletion success on dev server fallback",
+    deletedKey: filename || "unknown"
+  });
 });
 
 // GET Blocked Emails

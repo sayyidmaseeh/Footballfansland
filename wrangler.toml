@@ -6,3 +6,9 @@ pages_build_output_dir = "dist"
 # Production secrets and environment variables:
 # SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY should be set
 # through the Cloudflare Pages dashboard under project Settings -> Environment variables.
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "footballfansland-images"
+preview_bucket_name = "footballfansland-images-preview"
+

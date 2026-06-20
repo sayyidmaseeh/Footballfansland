@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { TileData } from '../types';
+import { uploadToR2, R2ImageType, R2UploadOptions } from './r2';
 
 // Read values from local storage overrides first, then from Vite's statically injected meta variables
 const localUrl = localStorage.getItem('supabase_url_override_v4') || '';
@@ -178,49 +179,28 @@ export interface ActivityLog {
   created_at?: string;
 }
 
-// Media storage helper: uploads directly to 'tile-photos' Supabase Bucket with Base64 fallback on error
-export async function dbUploadImage(file: File, bucketName: string = 'tile-photos'): Promise<string | null> {
-  if (!isSupabaseConfigured || !supabase) {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(file);
-    });
+// Media storage helper: Compress and Uploads directly to Cloudflare R2 secure CDN storage 
+export async function dbUploadImage(
+  file: File, 
+  bucketName: string = 'tile-photos',
+  options?: R2UploadOptions
+): Promise<string | null> {
+  // Map Supabase bucket names dynamically to Cloudflare R2 presets
+  let r2PresetType: R2ImageType = "territory";
+  const nameLower = bucketName.toLowerCase();
+  
+  if (nameLower.includes("profile") || nameLower.includes("avatar") || nameLower.includes("user")) {
+    r2PresetType = "profile";
+  } else if (nameLower.includes("banner") || nameLower.includes("header")) {
+    r2PresetType = "banner";
+  } else if (nameLower.includes("flex") || nameLower.includes("social") || nameLower.includes("fan")) {
+    r2PresetType = "fan_flex";
+  } else if (nameLower.includes("logo") || nameLower.includes("club")) {
+    r2PresetType = "logo";
   }
 
-  try {
-    const cleanFileName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-    const { data, error } = await supabase.storage
-      .from(bucketName)
-      .upload(cleanFileName, file, {
-        cacheControl: '3600',
-        upsert: true
-      });
-
-    if (error) {
-      if (error.message?.includes('bucket') || error.message?.includes('not found')) {
-        markBucketAsMissing(bucketName);
-      }
-      throw error;
-    }
-
-    markBucketAsFound(bucketName);
-    const { data: { publicUrl } } = supabase.storage
-      .from(bucketName)
-      .getPublicUrl(cleanFileName);
-
-    return publicUrl;
-  } catch (err) {
-    console.warn("Storage upload failed, falling back to Local Data URL:", err);
-    // Secure fallback
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(file);
-    });
-  }
+  console.log(`[R2 Bridge] Mapping bucket '${bucketName}' to Cloudflare R2 category preset '${r2PresetType}'`);
+  return uploadToR2(file, r2PresetType, options);
 }
 
 // Live Activities routed through secure full-stack backend

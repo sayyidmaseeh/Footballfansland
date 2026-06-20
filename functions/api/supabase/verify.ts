@@ -49,15 +49,7 @@ export async function onRequest(context: any) {
     }
   }
 
-  const missingBuckets: string[] = [];
-  try {
-    const { error } = await supabase.storage.getBucket("tile-photos");
-    if (error) {
-      missingBuckets.push("tile-photos");
-    }
-  } catch {
-    missingBuckets.push("tile-photos");
-  }
+  const missingBuckets: string[] = []; // Storage is managed completely by Cloudflare R2
 
   return new Response(JSON.stringify({
     configured: true,

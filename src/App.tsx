@@ -1432,6 +1432,10 @@ export default function App() {
     loadingPhotoTileIdsRef.current = loadingPhotoTileIds;
   }, [loadingPhotoTileIds]);
 
+  // Cloudflare R2 Live Upload progress states
+  const [r2UploadProgress, setR2UploadProgress] = useState<number>(0);
+  const [r2UploadStage, setR2UploadStage] = useState<string>('');
+
   // Popup notification toast state
   const [toast, setToast] = useState<{ message: string; description?: string; type: 'success' | 'info' | 'warning' } | null>(null);
 
@@ -5520,41 +5524,59 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
     // Add to loading state immediately to trigger the map spin load marker
     setLoadingPhotoTileIds(prev => [...prev, ...targetTileIds]);
 
+    setR2UploadProgress(1);
+    setR2UploadStage("Starting image task...");
+
     setToast({
-      message: isSupabaseConfigured ? "Storing on Supabase... ☁️" : "Processing image sandbox... 📸",
-      description: isSupabaseConfigured ? "Uploading image to Supabase Storage cloud..." : "Converting to local persistent offline image overlay...",
+      message: "Processing Image... 📸",
+      description: "Optimizing image file & compressing canvas grid for delivery...",
       type: "info"
     });
 
     try {
-      const publicUrl = await dbUploadImage(file);
+      const publicUrl = await dbUploadImage(file, 'tile-photos', {
+        onProgress: (progress, stage) => {
+          setR2UploadProgress(progress);
+          setR2UploadStage(stage);
+          setToast({
+            message: `Uploading Assets [${progress}%]`,
+            description: `${stage} - Powered by Cloudflare R2 Edge Storage.`,
+            type: "info"
+          });
+        }
+      });
+
       if (publicUrl) {
-        // Add a satisfying simulated delay of 1.2 seconds for visual feedback
+        // Add a satisfying simulated delay for visual stability
         setTimeout(() => {
           updateAllTargetsWithPhoto(publicUrl);
+          setR2UploadProgress(100);
+          setR2UploadStage("Finished!");
 
           setToast({
-            message: isSupabaseConfigured ? "Uploaded to Cloud! 📸☁️" : "Saved locally! 📸💾",
-            description: isSupabaseConfigured 
-              ? `Your map sector image overlay was saved securely to Supabase Storage for ${targetTileIds.length} sector(s).`
-              : `Saved overlay image using visual sandbox storage fallback for ${targetTileIds.length} sector(s).`,
+            message: "Storage Synchronized! 📸⚡",
+            description: `Compressed image published directly through Cloudflare global CDN cache for ${targetTileIds.length} sector(s).`,
             type: "success"
           });
-        }, 1200);
+        }, 800);
       } else {
         setLoadingPhotoTileIds(prev => prev.filter(id => !targetTileIds.includes(id)));
+        setR2UploadProgress(0);
+        setR2UploadStage("");
         setToast({
           message: "Upload Failed! ⚠️",
-          description: "Storage upload failed. Ensure configuration or local environment supports image conversion.",
+          description: "R2 client could not capture clean URL metadata. Retrying fallback sequence...",
           type: "error"
         });
       }
     } catch (err) {
       console.error("Storage upload failed:", err);
       setLoadingPhotoTileIds(prev => prev.filter(id => !targetTileIds.includes(id)));
+      setR2UploadProgress(0);
+      setR2UploadStage("");
       setToast({
         message: "Upload Failed! ⚠️",
-        description: "Storage upload encountered an unexpected error.",
+        description: "Encountered unexpected network interruption when transmitting image payload to Cloudflare.",
         type: "error"
       });
     } finally {
@@ -6489,8 +6511,29 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                         </div>
 
                         {/* Photo Area */}
-                        <div className="bg-slate-900/20 border border-slate-850 rounded-2xl p-3 flex flex-col gap-3 animate-fadeIn">
+                        <div className="bg-slate-900/20 border border-slate-850 rounded-2xl p-3 flex flex-col gap-3 animate-fadeIn w-full">
                           <label className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block font-bold">Region Image Overlay</label>
+
+                          {/* Dynamic Cloudflare R2 Upload Progress HUD */}
+                          {r2UploadProgress > 0 && r2UploadProgress < 100 && (
+                            <div className="bg-slate-950/70 p-2.5 rounded-xl border border-emerald-500/25 flex flex-col gap-1.5 animate-pulse">
+                              <div className="flex justify-between items-center text-[10px]">
+                                <span className="text-emerald-400 font-mono font-bold flex items-center gap-1.5">
+                                  <span className="inline-block w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping" />
+                                  R2 CDN Storage Pipeline
+                                </span>
+                                <span className="text-slate-400 font-mono text-[9px]">{r2UploadProgress}%</span>
+                              </div>
+                              <div className="w-full bg-slate-900 rounded-full h-1 overflow-hidden">
+                                <div 
+                                  className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full transition-all duration-200"
+                                  style={{ width: `${r2UploadProgress}%` }}
+                                />
+                              </div>
+                              <span className="text-[8.5px] text-slate-500 font-mono leading-tight">{r2UploadStage}</span>
+                            </div>
+                          )}
+
                           {tiles[selectedTileId!]?.photo ? (() => {
                             const activeTeam = tiles[selectedTileId!]?.team || 'None';
                             const activeStyle = TEAM_STYLES[activeTeam] || TEAM_STYLES['None'];
