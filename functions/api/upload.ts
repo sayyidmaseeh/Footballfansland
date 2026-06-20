@@ -34,18 +34,13 @@ export async function onRequest(context: any) {
     // 3. Resolve bound Cloudflare R2 Object Storage Bucket
     const r2 = env.R2 || env.R2_BUCKET || env.BUCKET;
     if (!r2) {
-      // High traffic resilience fallback: If the user hasn't bound R2 in the Cloudflare dashboard yet,
-      // return the base64 string directly so users can still preview in-app drawings offline/dynamically.
-      console.warn("[Cloudflare R2 API] Warning: R2 bucket was not bound. Falling back to data URI.");
       return new Response(
         JSON.stringify({
-          success: true,
-          url: file, // Returns base64 as fallback
-          filename: `sandbox-${filename}`,
-          warning: "R2 bucket is not bound. Storage is falling back to temporary inline caching.",
+          success: false,
+          error: "Image storage is not configured. Contact support.",
         }),
         {
-          status: 200, // Serve gracefully with warning
+          status: 503,
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
         }
       );

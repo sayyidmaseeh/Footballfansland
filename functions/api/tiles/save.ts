@@ -29,6 +29,13 @@ export async function onRequest(context: any) {
 
   const { id, team, photo, claimedBy, customText, textBackgroundStyle, imageBorderStyle, hyperlink, mergedWith, isMergedChild, mergedParentId, chats } = body;
 
+  if (photo && typeof photo === "string" && photo.trim().startsWith("data:")) {
+    return new Response(JSON.stringify({ success: false, error: "Invalid photo value: must be a hosted URL, not raw image data." }), {
+      status: 400,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+    });
+  }
+
   if (!id) {
     return new Response(JSON.stringify({ success: false, error: "Missing tile Identifier" }), {
       status: 400,

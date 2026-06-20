@@ -5546,7 +5546,9 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
         }
       });
 
-      if (publicUrl) {
+      const isRealUrl = publicUrl && (publicUrl.startsWith("https://") || publicUrl.startsWith("http://"));
+
+      if (isRealUrl) {
         // Add a satisfying simulated delay for visual stability
         setTimeout(() => {
           updateAllTargetsWithPhoto(publicUrl);
