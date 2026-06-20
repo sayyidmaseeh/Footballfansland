@@ -663,6 +663,60 @@ export default function App() {
   const [showRlsSql, setShowRlsSql] = useState(false);
   const [supabaseBackendConfig, setSupabaseBackendConfig] = useState<any>(null);
   const [isVerifyingSupabase, setIsVerifyingSupabase] = useState(false);
+  const [stagedMergeBackup, setStagedMergeBackup] = useState<Record<string, TileData> | null>(null);
+  const stagedMergeBackupRef = useRef<Record<string, TileData> | null>(null);
+  const stagedMergeMasterIdRef = useRef<string | null>(null);
+
+  const setStagedMerge = (backup: Record<string, TileData> | null, masterId: string | null) => {
+    setStagedMergeBackup(backup);
+    stagedMergeBackupRef.current = backup;
+    stagedMergeMasterIdRef.current = masterId;
+  };
+
+  const commitStagedMerge = () => {
+    setStagedMergeBackup(null);
+    stagedMergeBackupRef.current = null;
+    stagedMergeMasterIdRef.current = null;
+  };
+
+  const revertStagedMerge = () => {
+    const backup = stagedMergeBackupRef.current;
+    if (!backup) return;
+
+    const revertedIds = Object.keys(backup);
+    let nextTiles: Record<string, TileData> = {};
+    setTiles(prev => {
+      nextTiles = { ...prev };
+      revertedIds.forEach(id => {
+        nextTiles[id] = backup[id];
+      });
+      latestTilesRef.current = nextTiles;
+      return nextTiles;
+    });
+
+    setStagedMergeBackup(null);
+    stagedMergeBackupRef.current = null;
+    stagedMergeMasterIdRef.current = null;
+
+    setTimeout(() => {
+      updateVisibleGrid(nextTiles);
+    }, 50);
+
+    setToast({
+      message: "Merge Canceled 🔄",
+      description: "The staged tile merge was canceled and reverted.",
+      type: "info"
+    });
+  };
+
+  useEffect(() => {
+    if (stagedMergeBackupRef.current) {
+      const masterId = stagedMergeMasterIdRef.current;
+      if (selectedTileId !== masterId) {
+        revertStagedMerge();
+      }
+    }
+  }, [selectedTileId]);
 
   const fetchSupabaseBackendConfig = async () => {
     try {
@@ -2242,7 +2296,24 @@ export default function App() {
       };
     });
 
-    updateTilesBatch(bulk);
+    // Backup original tiles before merge for cancelling/reverting
+    const backup: Record<string, TileData> = {};
+    sortedIds.forEach(id => {
+      backup[id] = tiles[id] || { id, team: 'None', photo: '', chats: [] };
+    });
+    setStagedMerge(backup, masterId);
+
+    // Apply ONLY to local state and update visible map layer, NO remote dbSync or local storage yet!
+    let next: Record<string, TileData> = {};
+    setTiles(prev => {
+      next = { ...prev, ...bulk };
+      latestTilesRef.current = next;
+      return next;
+    });
+
+    setTimeout(() => {
+      updateVisibleGrid(next);
+    }, 0);
 
     setIsMultiSelectMode(false);
     setMultiSelectedTileIds([]);
@@ -2259,9 +2330,17 @@ export default function App() {
     };
 
     setTimeout(() => {
-      updateTileInState(masterId, {
-        ...masterUpdate,
-        chats: [...(masterUpdate.chats || []), mergerMsg]
+      setTiles(prev => {
+        const currentMaster = prev[masterId] || masterUpdate;
+        const updated = {
+          ...prev,
+          [masterId]: {
+            ...currentMaster,
+            chats: [...(currentMaster.chats || []), mergerMsg]
+          }
+        };
+        latestTilesRef.current = updated;
+        return updated;
       });
     }, 50);
   };
@@ -4949,6 +5028,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
 
     // If it was a multi-selected checkout, immediately complete the batch simulated payment and close the modal!
     if (isMultiSelectCheckout && pendingTeam !== 'None') {
+      commitStagedMerge();
       executeBatchSimulatedPayment(pendingTeam);
       setShowPaymentModal(false);
       setSelectedTileId(null);
@@ -5096,6 +5176,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
     localStorage.setItem('kerala_gift_tiles_balance', nextGiftTiles.toString());
 
     if (isMultiSelectCheckout && pendingTeam !== 'None') {
+      commitStagedMerge();
       executeBatchGiftTileClaim(pendingTeam);
       setShowPaymentModal(false);
       setSelectedTileId(null);
@@ -5166,6 +5247,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
     }
 
     if (isMultiSelectCheckout && pendingTeam !== 'None') {
+      commitStagedMerge();
       executeBatchFreeSlotPayment(pendingTeam);
       setShowPaymentModal(false);
       setSelectedTileId(null);
