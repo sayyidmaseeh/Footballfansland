@@ -1770,7 +1770,7 @@ export default function App() {
     };
   }, [isMultiSelectMode, isMultiSelectCheckout, drawerActiveWindow]);
 
-  // 1.5 REAL-TIME CLOUD SYSTEM SYNCHRONIZER: Periodically polls state updates to achieve live synchronization
+  // 1.5 REAL-TIME CLOUD SYSTEM SYNCHRONIZER: Periodically polls state updates and subscribes to database channels to achieve live synchronization
   useEffect(() => {
     if (!isSupabaseConfigured) return;
 
@@ -1797,10 +1797,70 @@ export default function App() {
       } catch (err) {
         console.warn("Real-time background sync poll skipped:", err);
       }
-    }, 4000);
+    }, 2000);
+
+    // Active real-time socket channel subscription for instant pushes to every visitor
+    let activeChannel: any = null;
+    try {
+      if (supabase) {
+        activeChannel = supabase
+          .channel('realtime-tiles-updates')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'tiles' },
+            (payload: any) => {
+              console.log('Real-time database tile update pushed:', payload);
+              
+              if (payload.eventType === 'DELETE') {
+                const deletedId = payload.old?.id;
+                if (deletedId) {
+                  setTiles(prev => {
+                    const next = { ...prev };
+                    delete next[deletedId];
+                    latestTilesRef.current = next;
+                    setTimeout(() => { updateVisibleGrid(next); }, 30);
+                    return next;
+                  });
+                }
+              } else if (payload.new && payload.new.id) {
+                const newRow = payload.new;
+                const formattedTile: TileData = {
+                  id: newRow.id,
+                  team: newRow.team || 'None',
+                  photo: newRow.photo || undefined,
+                  claimedBy: newRow.claimed_by || undefined,
+                  customText: newRow.custom_text || undefined,
+                  textBackgroundStyle: newRow.text_background_style || 'none',
+                  imageBorderStyle: newRow.image_border_style || 'none',
+                  hyperlink: newRow.hyperlink || undefined,
+                  mergedWith: newRow.merged_with || undefined,
+                  isMergedChild: !!newRow.is_merged_child,
+                  mergedParentId: newRow.merged_parent_id || undefined,
+                  chats: newRow.chats || []
+                };
+
+                setTiles(prev => {
+                  const next = { ...prev, [newRow.id]: formattedTile };
+                  latestTilesRef.current = next;
+                  setTimeout(() => { updateVisibleGrid(next); }, 30);
+                  return next;
+                });
+              }
+            }
+          )
+          .subscribe();
+      }
+    } catch (realtimeErr) {
+      console.warn("Supabase Realtime subscription initiation skipped:", realtimeErr);
+    }
 
     return () => {
       clearInterval(liveSyncInterval);
+      if (supabase && activeChannel) {
+        try {
+          supabase.removeChannel(activeChannel);
+        } catch (e) {}
+      }
     };
   }, []);
 
