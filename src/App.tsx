@@ -858,11 +858,7 @@ export default function App() {
       
       localStorage.setItem('kerala_football_map_referrals_v1', JSON.stringify(updated));
       
-      setFreeSlots(curr => {
-        const updatedSlots = parseFloat((curr + slotRewardCount).toFixed(2));
-        localStorage.setItem('kerala_claimed_free_slots_count', updatedSlots.toString());
-        return updatedSlots;
-      });
+      updateFreeSlotsAndSync(parseFloat((freeSlots + slotRewardCount).toFixed(2)));
       
       if (slotRewardCount > 0.1) {
         setToast({
@@ -889,15 +885,51 @@ export default function App() {
     favoriteClub: string;
     isAdmin?: boolean;
     picture?: string;
+    freeSlots?: number;
   }>(() => {
     return {
       username: 'Guest_Fan',
       email: 'guest@footballmap.com',
       favoriteClub: 'Argentina',
       isAdmin: false,
-      picture: "https://api.dicebear.com/7.x/pixel-art/svg?seed=Guest"
+      picture: "https://api.dicebear.com/7.x/pixel-art/svg?seed=Guest",
+      freeSlots: 3
     };
   });
+
+  // Sync wrapper for free slots that updates state, localStorage, loggedInUser sub-attributes and database
+  const updateFreeSlotsAndSync = (nextValue: number) => {
+    const formatted = parseFloat(nextValue.toFixed(2));
+    setFreeSlots(formatted);
+    localStorage.setItem('kerala_claimed_free_slots_count', formatted.toString());
+    
+    if (loggedInUser && loggedInUser.email !== 'guest@footballmap.com' && loggedInUser.username !== 'Guest_Fan') {
+      const updatedUser = { ...loggedInUser, freeSlots: formatted };
+      if (loggedInUser.freeSlots !== formatted) {
+        setLoggedInUser(updatedUser);
+        dbUpsertUser(updatedUser).then((success) => {
+          if (success) {
+            console.log(`Successfully synced freeSlots (${formatted}) to Supabase for ${loggedInUser.username}`);
+          }
+        });
+      }
+    }
+  };
+
+  // Synchronise freeSlots state with loggedInUser on session changes to support multiple accounts cleanly
+  useEffect(() => {
+    if (loggedInUser) {
+      if (loggedInUser.username === 'Guest_Fan' || loggedInUser.email === 'guest@footballmap.com') {
+        const guestSlotsStr = localStorage.getItem('kerala_claimed_free_slots_count');
+        const guestSlots = guestSlotsStr ? parseFloat(guestSlotsStr) : 3;
+        setFreeSlots(guestSlots);
+      } else {
+        const userSlots = loggedInUser.freeSlots !== undefined ? loggedInUser.freeSlots : 3;
+        setFreeSlots(userSlots);
+        localStorage.setItem('kerala_claimed_free_slots_count', userSlots.toString());
+      }
+    }
+  }, [loggedInUser]);
 
   // Extended Super Admin & User Directory Persistence
   const [registeredUsers, setRegisteredUsers] = useState<{
@@ -1054,7 +1086,8 @@ export default function App() {
               email: match.email,
               favoriteClub: match.favoriteClub,
               isAdmin: !!match.isAdmin,
-              picture: match.picture
+              picture: match.picture,
+              freeSlots: match.freeSlots !== undefined ? match.freeSlots : 3
             });
           } else {
             const username = session.user.user_metadata?.username || `fan_${session.user.id.slice(0, 5)}`;
@@ -1064,7 +1097,8 @@ export default function App() {
               email,
               favoriteClub,
               isAdmin: false,
-              picture: session.user.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${username}`
+              picture: session.user.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${username}`,
+              freeSlots: 3
             };
             await dbUpsertUser(profile);
             setLoggedInUser(profile);
@@ -1088,7 +1122,8 @@ export default function App() {
               email: match.email,
               favoriteClub: match.favoriteClub,
               isAdmin: !!match.isAdmin,
-              picture: match.picture
+              picture: match.picture,
+              freeSlots: match.freeSlots !== undefined ? match.freeSlots : 3
             });
           } else {
             const username = session.user.user_metadata?.username || `fan_${session.user.id.slice(0, 5)}`;
@@ -1098,7 +1133,8 @@ export default function App() {
               email,
               favoriteClub,
               isAdmin: false,
-              picture: session.user.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${username}`
+              picture: session.user.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${username}`,
+              freeSlots: 3
             };
             await dbUpsertUser(profile);
             setLoggedInUser(profile);
@@ -1110,7 +1146,8 @@ export default function App() {
           email: 'guest@footballmap.com',
           favoriteClub: 'Argentina',
           isAdmin: false,
-          picture: "https://api.dicebear.com/7.x/pixel-art/svg?seed=Guest"
+          picture: "https://api.dicebear.com/7.x/pixel-art/svg?seed=Guest",
+          freeSlots: 3
         };
         setLoggedInUser(defaultUser);
       }
@@ -1255,12 +1292,16 @@ export default function App() {
         const profiles = await dbFetchUsers();
         const match = profiles.find((p) => p.email.toLowerCase() === loginEmail.toLowerCase());
 
-        const matchedProfile = match || {
+        const matchedProfile = match ? {
+          ...match,
+          freeSlots: match.freeSlots !== undefined ? match.freeSlots : 3
+        } : {
           username: data.user.user_metadata?.username || `fan_${data.user.id.slice(0, 5)}`,
           email: loginEmail.toLowerCase(),
           favoriteClub: data.user.user_metadata?.favorite_club || 'Argentina',
           isAdmin: false,
-          picture: data.user.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${data.user.id.slice(0, 5)}`
+          picture: data.user.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${data.user.id.slice(0, 5)}`,
+          freeSlots: 3
         };
 
         if (!match) {
@@ -2202,8 +2243,7 @@ export default function App() {
 
     // Deduct slots
     const nextFreeSlots = freeSlots - N;
-    setFreeSlots(nextFreeSlots);
-    localStorage.setItem('kerala_claimed_free_slots_count', nextFreeSlots.toString());
+    updateFreeSlotsAndSync(nextFreeSlots);
 
     const ownerName = loggedInUser ? loggedInUser.username : 'Guest';
 
@@ -5083,8 +5123,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
       nextFreeSlots = 0;
       nextGiftTiles = parseFloat((giftTiles - needed).toFixed(2));
     }
-    setFreeSlots(nextFreeSlots);
-    localStorage.setItem('kerala_claimed_free_slots_count', nextFreeSlots.toString());
+    updateFreeSlotsAndSync(nextFreeSlots);
     setGiftTiles(nextGiftTiles);
     localStorage.setItem('kerala_gift_tiles_balance', nextGiftTiles.toString());
 
@@ -5155,8 +5194,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
       nextFreeSlots = 0;
       nextGiftTiles = parseFloat((giftTiles - needed).toFixed(2));
     }
-    setFreeSlots(nextFreeSlots);
-    localStorage.setItem('kerala_claimed_free_slots_count', nextFreeSlots.toString());
+    updateFreeSlotsAndSync(nextFreeSlots);
     setGiftTiles(nextGiftTiles);
     localStorage.setItem('kerala_gift_tiles_balance', nextGiftTiles.toString());
 
@@ -5311,8 +5349,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
     }
 
     const nextFreeSlots = freeSlots - 1;
-    setFreeSlots(nextFreeSlots);
-    localStorage.setItem('kerala_claimed_free_slots_count', nextFreeSlots.toString());
+    updateFreeSlotsAndSync(nextFreeSlots);
 
     const activeData = tiles[tileId] || { id: tileId, team: 'None', photo: '', chats: [] };
     const userTeam = loggedInUser ? (loggedInUser.favoriteClub as TeamChoice) : 'Argentina';
@@ -5417,8 +5454,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
 
     // Keep freeSlots as secondary/legacy claim token
     const nextFreeSlots = freeSlots + 1;
-    setFreeSlots(nextFreeSlots);
-    localStorage.setItem('kerala_claimed_free_slots_count', nextFreeSlots.toString());
+    updateFreeSlotsAndSync(nextFreeSlots);
 
     if (dailyBonusAwarded) {
       message = "🎉 100% Daily Bonus Achieved! 🏆";
@@ -6227,13 +6263,91 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                 const activeData = tiles[selectedTileId!];
                 const isTileOwnedByMe = !activeData?.claimedBy || activeData?.claimedBy === (loggedInUser ? loggedInUser.username : 'Guest') || activeData?.team === 'None';
                 if (!isTileOwnedByMe) {
+                  const teamColorStyle = TEAM_STYLES[activeData?.team || 'None'] || TEAM_STYLES['None'];
                   return (
-                    <div className="bg-slate-950/90 border border-slate-800 rounded-2xl p-4 text-center flex flex-col items-center gap-2 animate-fade-in my-2">
-                      <Lock className="w-8 h-8 text-slate-500 animate-pulse" />
-                      <div>
-                        <h4 className="text-xs font-bold text-slate-100">🔒 Reserved Fan Territory</h4>
-                        <p className="text-[10px] font-mono text-slate-450 uppercase mt-0.5 tracking-wider font-extrabold select-all">
-                          Owned by: @{activeData?.claimedBy || 'Guest'}
+                    <div className="flex flex-col gap-4 animate-fadeIn my-1">
+                      {/* Active Status Header */}
+                      <div className="bg-slate-950/90 border border-slate-850 rounded-2xl p-4 text-center flex flex-col items-center gap-2.5">
+                        <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1 rounded-full text-[10px] font-mono text-amber-500 font-extrabold shadow-inner">
+                          <Lock className="w-3.5 h-3.5 text-amber-500" />
+                          <span>Reserved Fan Territory</span>
+                        </div>
+                        
+                        <div>
+                          <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">Territory Sovereign</p>
+                          <h4 className="text-sm font-extrabold text-white mt-0.5 tracking-tight">
+                            @{activeData?.claimedBy || 'Guest'}
+                          </h4>
+                        </div>
+
+                        <div 
+                          className="text-[10.5px] font-semibold tracking-wide px-3 py-1 rounded-xl border flex items-center justify-center gap-1.5 mt-1"
+                          style={{
+                            backgroundColor: `${teamColorStyle.color}15`,
+                            borderColor: `${teamColorStyle.color}40`,
+                            color: teamColorStyle.color || '#fff'
+                          }}
+                        >
+                          <span>{teamColorStyle.flagEmoji || '🏳️'}</span>
+                          <span>Active Allegiance: {activeData?.team || 'None'}</span>
+                        </div>
+                      </div>
+
+                      {/* Photo Display - Cloudflare R2 Uploaded Photos shown to Everyone! */}
+                      {activeData?.photo && (
+                        <div className="bg-slate-900/20 border border-slate-850 rounded-2xl p-3 flex flex-col gap-2.5">
+                          <span className="text-[10px] text-slate-500 font-mono uppercase tracking-wider block font-bold">Region Image Overlay 🖼️</span>
+                          <div 
+                            className="relative rounded-xl overflow-hidden aspect-video border-[4px] shadow-lg"
+                            style={{ borderColor: teamColorStyle.color || '#475569' }}
+                          >
+                            <img 
+                              src={activeData.photo} 
+                              alt="Fan snap" 
+                              className="w-full h-full object-cover" 
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Custom Text / Message Display */}
+                      {activeData?.customText && (
+                        <div className="bg-slate-900/25 border border-slate-850 rounded-2xl p-3">
+                          <span className="text-[10px] text-slate-500 font-mono uppercase tracking-wider block font-bold mb-1">Fan Inscription ✍️</span>
+                          <p className="font-mono text-[10.5px] leading-relaxed text-slate-300 italic bg-slate-950/40 p-3 rounded-xl border border-slate-900 shadow-inner">
+                            &ldquo;{activeData.customText}&rdquo;
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Hyperlink Visit Option */}
+                      {activeData?.hyperlink && (
+                        <div className="bg-slate-900/20 border border-slate-850 rounded-2xl p-3">
+                          <span className="text-[10px] text-slate-500 font-mono uppercase tracking-wider block font-bold mb-2">Connected fan web link</span>
+                          <a
+                            href={activeData.hyperlink.startsWith('http') ? activeData.hyperlink : `https://${activeData.hyperlink}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full py-2.5 bg-gradient-to-tr from-emerald-500/10 to-teal-500/10 border border-emerald-500/30 hover:border-emerald-500/80 text-emerald-300 hover:text-emerald-200 rounded-xl font-mono text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all text-center cursor-pointer shadow-md"
+                          >
+                            Visit Attached Link 🔗
+                          </a>
+                        </div>
+                      )}
+
+                      {/* Reclaim / Challenge Conquering button option */}
+                      <div className="mt-2 pt-4 border-t border-slate-900 flex flex-col gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => handleReclaimTerritory(selectedTileId!)}
+                          className="w-full py-3 bg-gradient-to-r from-red-500 to-amber-600 hover:from-red-400 hover:to-amber-500 text-white font-mono font-black rounded-xl text-[10.5px] uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-lg relative overflow-hidden group hover:scale-[1.01] active:scale-[0.99]"
+                        >
+                          <span className="absolute -inset-y-0 -inset-x-0 bg-white/10 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000 skew-x-12" />
+                          <span>⚔️ Forceful Conquering</span>
+                        </button>
+                        <p className="text-[9.5px] font-mono text-slate-500 text-center leading-normal">
+                          Conquering overwrites previous active allegiance. Consume 1 slot/tile balance to claim sovereignty.
                         </p>
                       </div>
                     </div>
@@ -8267,8 +8381,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
                       setPurchaseLoading(false);
                       const cost = slotsToBuy * 10;
                       const nextSlotsValue = freeSlots + slotsToBuy;
-                      setFreeSlots(nextSlotsValue);
-                      localStorage.setItem('kerala_claimed_free_slots_count', nextSlotsValue.toString());
+                      updateFreeSlotsAndSync(nextSlotsValue);
                       setShowBuySlotsModal(false);
                       setToast({
                         message: "Purchase Approved! 🪙",
