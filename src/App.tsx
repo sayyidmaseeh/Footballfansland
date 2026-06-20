@@ -1740,7 +1740,7 @@ export default function App() {
           dbFetchActivityLogs().catch(() => null)
         ]);
 
-        if (cloudTiles && Object.keys(cloudTiles).length > 0) {
+        if (cloudTiles) {
           const currentStringified = JSON.stringify(latestTilesRef.current || {});
           const nextStringified = JSON.stringify(cloudTiles);
           if (currentStringified !== nextStringified) {
@@ -3415,7 +3415,7 @@ export default function App() {
           setRegisteredUsers(usersList);
         }
 
-        if (cloudTiles && Object.keys(cloudTiles).length > 0) {
+        if (cloudTiles) {
           setTiles(cloudTiles);
           latestTilesRef.current = cloudTiles;
           setTimeout(() => {
