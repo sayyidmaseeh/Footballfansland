@@ -209,8 +209,19 @@ export async function uploadToR2(
     }
   } catch (err) {
     console.error(`[R2 Upload Manager] Terminal Upload Failure:`, err);
-    onProgress?.(100, "Upload Error Handled");
-    return null;
+    onProgress?.(100, "Local Sandbox fallback triggered");
+    
+    // Un-interrupted backup fallback so matches are preserved locally even under offline simulation
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        resolve(reader.result as string);
+      };
+      reader.onerror = () => {
+        resolve(null);
+      };
+      reader.readAsDataURL(file);
+    });
   }
 }
 

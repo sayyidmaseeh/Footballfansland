@@ -1740,7 +1740,7 @@ export default function App() {
           dbFetchActivityLogs().catch(() => null)
         ]);
 
-        if (cloudTiles) {
+        if (cloudTiles && Object.keys(cloudTiles).length > 0) {
           const currentStringified = JSON.stringify(latestTilesRef.current || {});
           const nextStringified = JSON.stringify(cloudTiles);
           if (currentStringified !== nextStringified) {
@@ -3415,7 +3415,7 @@ export default function App() {
           setRegisteredUsers(usersList);
         }
 
-        if (cloudTiles) {
+        if (cloudTiles && Object.keys(cloudTiles).length > 0) {
           setTiles(cloudTiles);
           latestTilesRef.current = cloudTiles;
           setTimeout(() => {
@@ -5546,9 +5546,7 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
         }
       });
 
-      const isRealUrl = publicUrl && (publicUrl.startsWith("https://") || publicUrl.startsWith("http://"));
-
-      if (isRealUrl) {
+      if (publicUrl) {
         // Add a satisfying simulated delay for visual stability
         setTimeout(() => {
           updateAllTargetsWithPhoto(publicUrl);
