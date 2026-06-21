@@ -1309,65 +1309,6 @@ export default function App() {
     }
   };
 
-  const handleBypassEmailVerification = async () => {
-    try {
-      setIsAuthLoading(true);
-      const targetEmail = verificationEmail || loginEmail;
-      if (!targetEmail) {
-        setToast({
-          message: "No Active Session Profile Found ⚠️",
-          description: "Cannot bypass. Please retry registering.",
-          type: "error"
-        });
-        return;
-      }
-      
-      const bypassProfile = {
-        username: loginUsername || targetEmail.split('@')[0],
-        email: targetEmail.toLowerCase(),
-        favoriteClub: loginFavClub || 'None',
-        isAdmin: false,
-        picture: `https://api.dicebear.com/7.x/pixel-art/svg?seed=${loginUsername || targetEmail.split('@')[0]}`,
-        freeSlots: 3,
-        emailVerified: true
-      };
-
-      await dbUpsertUser(bypassProfile);
-      setLoggedInUser(bypassProfile);
-      localStorage.setItem('kerala_logged_in_user', JSON.stringify(bypassProfile));
-      setShowVerificationPopup(false);
-
-      setToast({
-        message: "Sandbox Email Confirmed! ⚡",
-        description: `Successfully bypassed Supabase email delay. Welcome to Kerala Football Map, ${bypassProfile.username}! 3 claimant slots credited.`,
-        type: "success"
-      });
-    } catch (err: any) {
-      console.warn("Bypass Verification Error:", err);
-      // Fallback update
-      const targetEmail = verificationEmail || loginEmail || 'user@footballmap.com';
-      const fallbackProfile = {
-        username: loginUsername || targetEmail.split('@')[0],
-        email: targetEmail.toLowerCase(),
-        favoriteClub: loginFavClub || 'None',
-        isAdmin: false,
-        picture: `https://api.dicebear.com/7.x/pixel-art/svg?seed=${loginUsername || targetEmail.split('@')[0]}`,
-        freeSlots: 3,
-        emailVerified: true
-      };
-      setLoggedInUser(fallbackProfile);
-      localStorage.setItem('kerala_logged_in_user', JSON.stringify(fallbackProfile));
-      setShowVerificationPopup(false);
-      setToast({
-        message: "Sandbox Profile Activated Locally ⚡",
-        description: `Bypassed live SMTP queue. Ready to play!`,
-        type: "success"
-      });
-    } finally {
-      setIsAuthLoading(false);
-    }
-  };
-
   const handleAuthSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginEmail || !loginPassword) {
@@ -10431,78 +10372,45 @@ A: Navigate to your project in the Cloudflare Dashboard, go to Settings > Variab
       {/* Production-Level Authenticator: Verification Waiting Drawer */}
       <AnimatePresence>
         {showVerificationPopup && (
-          <div className="absolute inset-0 z-[120] flex items-center justify-center bg-slate-950/90 backdrop-blur-md px-4 overflow-y-auto">
+          <div className="absolute inset-0 z-[120] flex items-center justify-center bg-slate-950/80 backdrop-blur-md px-4">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="relative w-full max-w-md bg-slate-950/95 border border-slate-800/80 rounded-2xl p-6 shadow-2xl relative z-10 text-center space-y-4 my-8"
+              className="relative w-full max-w-sm bg-slate-950/95 border border-slate-800/80 rounded-2xl p-6 shadow-2xl relative z-10 text-center"
               id="verification-waiting-popup"
             >
               <div className="absolute -top-12 -left-12 w-28 h-28 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none" />
 
-              <span className="inline-flex p-3 rounded-2xl bg-gradient-to-tr from-emerald-500/10 to-teal-500/20 border border-emerald-500/20 shadow-inner mx-auto">
+              <span className="inline-flex p-3 rounded-2xl bg-gradient-to-tr from-emerald-500/10 to-teal-500/20 border border-emerald-500/20 mb-4 shadow-inner">
                 <Mail className="w-6 h-6 text-emerald-400 animate-pulse" />
               </span>
 
-              <div>
-                <h3 className="text-sm font-black text-white uppercase tracking-wider font-sans mb-1">
-                  Confirm your Email! 📧
-                </h3>
-                <p className="text-[10.5px] font-mono text-slate-400 max-w-xs mx-auto leading-relaxed">
-                  We've relayed an activation link to <strong className="text-emerald-400">{verificationEmail}</strong>. Please tap that email to secure your profile and unlock full claims.
-                </p>
-              </div>
+              <h3 className="text-sm font-black text-white uppercase tracking-wider font-sans mb-1">
+                Confirm your Email! 📧
+              </h3>
+              <p className="text-[10.5px] font-mono text-slate-400 max-w-xs mx-auto leading-relaxed">
+                We've relayed an activation link to <strong className="text-emerald-400">{verificationEmail}</strong>. Please tap that email to secure your profile and unlock full quadrant rights.
+              </p>
 
-              {/* Helpful Cloudflare & Supabase Troubleshooting Tips */}
-              <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80 text-left text-[10px] space-y-2 leading-relaxed font-mono">
-                <span className="font-extrabold text-amber-400 uppercase tracking-wider text-[9px] block">⚠️ Didn't Receive the Email?</span>
-                <p className="text-slate-350">
-                  When deploying to <strong className="text-emerald-400">Cloudflare Pages</strong> or custom domains, emails might get delayed or rejected because of:
-                </p>
-                <ul className="list-disc pl-4 space-y-1 text-slate-400 text-[9.5px]">
-                  <li>
-                    <strong className="text-white">Whitelisting</strong>: Your custom domain must be whitelisted as an <strong className="text-teal-400">Allowed Redirect URL</strong> in <strong className="text-slate-200">Supabase Console ➜ Authentication ➜ URL Configuration</strong>.
-                  </li>
-                  <li>
-                    <strong className="text-white">Hourly Limits</strong>: Default Supabase SMTP has a sandbox cap of 3 emails per hour.
-                  </li>
-                  <li>
-                    <strong className="text-white">Sender Mismatch</strong>: If using custom SMTP, ensure your sender domain DNS records are verified with your provider.
-                  </li>
-                </ul>
-              </div>
-
-              {/* Robust Bypass Button & Navigation Controls */}
-              <div className="flex flex-col gap-2 pt-2">
+              <div className="mt-5 flex flex-col gap-2">
                 <button
                   type="button"
-                  disabled={isAuthLoading}
-                  onClick={handleBypassEmailVerification}
-                  className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-xl text-[10.5px] font-mono uppercase tracking-wide transition-all cursor-pointer shadow-lg hover:shadow-emerald-500/10 select-none disabled:opacity-50"
+                  onClick={() => {
+                    setShowVerificationPopup(false);
+                    setShowLoginModal(true);
+                  }}
+                  className="w-full py-2 bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-350 hover:text-white rounded-xl text-[10px] font-bold uppercase transition-all cursor-pointer"
                 >
-                  {isAuthLoading ? "Activating Profile..." : "Bypass Verification & Instant Login ⚡"}
+                  Return to Sign In
                 </button>
-
-                <div className="grid grid-cols-2 gap-2 mt-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowVerificationPopup(false);
-                      setShowLoginModal(true);
-                    }}
-                    className="w-full py-2 bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-350 hover:text-white rounded-xl text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer"
-                  >
-                    Return to Sign In
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowVerificationPopup(false)}
-                    className="w-full py-2 bg-slate-900/40 hover:bg-slate-900 border border-slate-900 text-slate-500 hover:text-slate-400 rounded-xl text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer"
-                  >
-                    Dismiss Drawer
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowVerificationPopup(false)}
+                  className="w-full py-2 text-slate-500 hover:text-slate-400 text-[9px] font-mono uppercase tracking-wide cursor-pointer"
+                >
+                  Dismiss Indicator
+                </button>
               </div>
             </motion.div>
           </div>
